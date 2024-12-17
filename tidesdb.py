@@ -19,6 +19,7 @@ from ctypes import c_char_p, c_int, c_float, c_bool, c_size_t, c_uint8, c_time_t
 # Load the tidesdb library
 lib = ctypes.CDLL('PATH_TO_TIDESDB_LIB')
 
+# TidesDB class
 class TidesDB:
     def __init__(self, tdb):
         self.tdb = tdb
@@ -86,6 +87,7 @@ class TidesDB:
             raise Exception("Failed to list column families")
         return ctypes.string_at(cf_list).decode('utf-8')
 
+# Cursor class to iterate over a column family key value pairs
 class Cursor:
     def __init__(self, cursor):
         self.cursor = cursor
@@ -126,6 +128,7 @@ class Cursor:
         if result != 0:
             raise Exception("Failed to free cursor")
 
+# Transaction class for TidesDB column family transactions
 class Transaction:
     def __init__(self, txn):
         self.txn = txn
