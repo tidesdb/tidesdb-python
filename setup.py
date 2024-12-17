@@ -11,7 +11,6 @@ setup(
     long_description_content_type="text/markdown", 
     classifiers=[ 
     "Topic :: Database",
-    "Topic :: Database :: Front-End",
     "Topic :: Software Development :: Libraries :: Python Modules"
     ],
     python_requires='>=3.6', 
