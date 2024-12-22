@@ -19,6 +19,18 @@ from ctypes import c_char_p, c_int, c_float, c_bool, c_size_t, c_uint8, c_time_t
 # Load the tidesdb library
 lib = ctypes.CDLL('PATH_TO_TIDESDB_LIB')
 
+# TidesDB supported compression algorithm options
+class TidesDBCompressionAlgo:
+    NO_COMPRESSION = 0
+    COMPRESS_SNAPPY = 1
+    COMPRESS_LZ4 = 2
+    COMPRESS_ZSTD = 3
+
+# Column family memtable data structure options
+class TidesDBMemtableDS:
+    SKIP_LIST = 0
+    HASH_TABLE = 1
+
 # TidesDB class
 class TidesDB:
     def __init__(self, tdb):
@@ -38,9 +50,9 @@ class TidesDB:
         if result != 0:
             raise Exception("Failed to close TidesDB")
 
-    def create_column_family(self, name, flush_threshold, max_level, probability, compressed, compress_algo, bloom_filter):
+    def create_column_family(self, name, flush_threshold, max_level, probability, compressed, compress_algo, bloom_filter, memtable_ds):
         c_name = create_string_buffer(name.encode('utf-8'))
-        result = lib.tidesdb_create_column_family(self.tdb, c_name, c_int(flush_threshold), c_int(max_level), c_float(probability), c_bool(compressed), c_int(compress_algo), c_bool(bloom_filter))
+        result = lib.tidesdb_create_column_family(self.tdb, c_name, c_int(flush_threshold), c_int(max_level), c_float(probability), c_bool(compressed), c_int(compress_algo), c_bool(bloom_filter), c_int(memtable_ds))
         if result != 0:
             raise Exception("Failed to create column family")
 
