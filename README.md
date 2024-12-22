@@ -2,17 +2,15 @@
 
 Official Python binding for TidesDB
 
-In active development.. Check back later!
-
-
 ### Usage
 
 ```py
-# open a database
-db = TidesDB.open('/your_db_path')
+# open a database.  
+# will reopen one if existing
+db = TidesDB.open('your_db_dir')
 
 # create a column family
-db.create_column_family("cf_name", 100, 3, 0.5, True, 1, True)
+db.create_column_family("cf_name", 1024*1024*64, 12, 0.24, True, COMPRESS_SNAPPY, True, SKIP_LIST)
 
 # start a transaction
 txn = Transaction.begin(db, "cf_name")
