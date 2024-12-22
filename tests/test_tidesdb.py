@@ -18,8 +18,9 @@ class TestTidesDBBase(unittest.TestCase):
                 max_level=12,
                 probability=0.24,
                 compressed=False,
-                compress_algo=0,
-                bloom_filter=False
+                compress_algo=NO_COMPRESSION,
+                bloom_filter=False,
+                memtable_ds=SKIP_LIST
             )
 
 if __name__ == '__main__':
