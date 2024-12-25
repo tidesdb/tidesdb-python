@@ -5,8 +5,9 @@ Official Python binding for TidesDB
 ### Usage
 
 #### Basic operations
+
 ```py
-from tidesdb import TidesDB, TidesDBCompressionAlgo, TidesDBMemtableDS
+ from tidesdb import TidesDB, TidesDBCompressionAlgo, TidesDBMemtableDS
 
 # Open a TidesDB database
 db = TidesDB.open('my_db')
@@ -24,7 +25,7 @@ db.create_column_family(
 )
 
 # Put key-value pair into the database
-db.put("my_column_family", b"key1", b"value1", ttl=3600)
+db.put("my_column_family", b"key1", b"value1", ttl=3600) # ttl=-1 for no ttl
 
 # Get the value for the key
 value = db.get("my_column_family", b"key1")
@@ -44,8 +45,8 @@ db.close()
 
 ```
 
-
 #### Using Transactions
+
 ```py
 from tidesdb import TidesDB, Transaction, TidesDBCompressionAlgo, TidesDBMemtableDS
 
@@ -68,8 +69,8 @@ db.create_column_family(
 txn = Transaction.begin(db, "my_column_family")
 
 # Put multiple key-value pairs in the transaction
-txn.put(b"key2", b"value2", ttl=3600)
-txn.put(b"key3", b"value3", ttl=3600)
+txn.put(b"key2", b"value2", ttl=-1)
+txn.put(b"key3", b"value3", ttl=-1)
 
 # Commit the transaction
 txn.commit()
@@ -86,6 +87,7 @@ db.close()
 ```
 
 #### Using Cursor
+
 ```py
 from tidesdb import TidesDB, Cursor, TidesDBCompressionAlgo, TidesDBMemtableDS
 
@@ -140,6 +142,7 @@ db.close()
 ```
 
 #### Listing Column Families
+
 ```py
 from tidesdb import TidesDB
 
@@ -155,8 +158,8 @@ db.close()
 
 ```
 
-
 #### Dropping Column Family
+
 ```py
 from tidesdb import TidesDB
 
