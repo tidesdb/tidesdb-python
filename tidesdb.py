@@ -14,10 +14,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import ctypes
+import ctypes.util
 from ctypes import c_char_p, c_int, c_float, c_bool, c_size_t, c_uint8, c_time_t, POINTER, byref, create_string_buffer
 
-# Load the tidesdb library
-lib = ctypes.CDLL('PATH_TO_TIDESDB_LIB')
+# We try to find the TidesDB shared library
+library_name = 'tidesdb'  # We set base to be tidesdb
+library_path = ctypes.util.find_library(library_name) # We try to find the library
+
+if library_path:
+    # We will load the library using ctypes.CDLL
+    lib = ctypes.CDLL(library_path)
+else:
+    # Raise an exception if the library is not found
+    raise FileNotFoundError(f"Library '{library_name}' not found. Checked paths: {ctypes.util.get_library_dirs()}")
 
 # TidesDB supported compression algorithm options
 class TidesDBCompressionAlgo:
