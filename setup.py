@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="tidesdb",
-    version="0.2",
+    version="0.3.0",
     packages=find_packages(),
     author="Alex Gaetano Padula",
     author_email="me@alexpadula.com",
