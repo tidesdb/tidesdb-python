@@ -2,7 +2,23 @@
 
 Official Python binding for TidesDB
 
+### Install
+
+Installing latest version from source using pip.
+
+```py
+pip install git+https://github.com/tidesdb/tidesdb-python.git
+
+```
+
 ### Usage
+
+#### Getting current TidesDB module version
+
+```python
+import tidesdb
+print(tidesdb.__version__)
+```
 
 #### Basic operations
 
@@ -18,7 +34,7 @@ db.create_column_family(
     1024*1024*64,    # Flush threshold (64MB)
     12,              # Max level skip list, if using hash table is irrelevant
     0.24,            # Probability skip list, if using hash table is irrelevant
-    True,            # Enable compression
+    True,            # Enable compression, is slower
     TidesDBCompressionAlgo.COMPRESS_SNAPPY,  # Compression algorithm can be NO_COMPRESSION, COMPRESS_SNAPPY, COMPRESS_LZ4, COMPRESS_ZSTD
     True,            # Enable bloom filter
     TidesDBMemtableDS.SKIP_LIST  # Use skip list for memtable
@@ -173,3 +189,12 @@ db.drop_column_family("my_column_family")
 db.close()
 
 ```
+
+#### Compacting Column Family SSTables
+Compaction will cut the amount of SSTables for a column family in half by pairing, merging and removing expired and tombstoned keys for the specified column family, with a specified number of threads.
+
+```python
+db.compact_sstables("my_column_family", max_threads=4)  # max threads is refering to amount of threads used for compaction process
+# 4 threads means 2 sstables being paired per thread which is faster than a lone thread say.
+```
+
