@@ -2,10 +2,10 @@ from setuptools import setup, find_packages
 
 setup(
     name="tidesdb",
-    version="0.3.0",
+    version="0.4.0",
     packages=find_packages(),
-    author="Alex Gaetano Padula",
-    author_email="me@alexpadula.com",
+    author="TidesDB",
+    author_email="hello@tidesdb.com",
     description="A Python wrapper-binding for TidesDB",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
