@@ -122,7 +122,7 @@ class BasicOperationsDemo:
 
 def main():
     """Main entry point for the basic operations demo."""
-    db_path = str(Path.cwd() / "output")
+    db_path = str(Path.cwd() / "basic_output")
     
     demo = BasicOperationsDemo(db_path)
     try:
