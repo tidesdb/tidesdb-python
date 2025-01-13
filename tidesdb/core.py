@@ -1,52 +1,39 @@
-# Copyright (C) TidesDB
-#
-# Original Author: Alex Gaetano Padula
-#
-# Licensed under the Mozilla Public License, v. 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#	https://www.mozilla.org/en-US/MPL/2.0/
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+TidesDB Python Bindings Core Module
+"""
 import ctypes
 import ctypes.util
-from ctypes import c_char_p, c_int, c_float, c_bool, c_size_t, c_uint8, c_time_t, POINTER, byref, create_string_buffer
+from ctypes import (
+    c_char_p, c_int, c_float, c_bool, c_size_t,
+    c_uint8, c_time_t, POINTER, byref, create_string_buffer
+)
 
-# We try to find the TidesDB shared library
-library_name = 'tidesdb'  # We set base to be tidesdb
-library_path = ctypes.util.find_library(library_name) # We try to find the library
-
-if library_path:
-    # We will load the library using ctypes.CDLL
-    lib = ctypes.CDLL(library_path)
-else:
-    # Raise an exception if the library is not found
-    raise FileNotFoundError(f"Library '{library_name}' not found. Checked paths: {ctypes.util.get_library_dirs()}")
-
-# TidesDB supported compression algorithm options
 class TidesDBCompressionAlgo:
     NO_COMPRESSION = 0
     COMPRESS_SNAPPY = 1
     COMPRESS_LZ4 = 2
     COMPRESS_ZSTD = 3
 
-# Column family memtable data structure options
 class TidesDBMemtableDS:
     SKIP_LIST = 0
     HASH_TABLE = 1
 
-# TidesDB class
+library_name = 'tidesdb'
+library_path = ctypes.util.find_library(library_name)
+
+if library_path:
+    lib = ctypes.CDLL(library_path)
+else:
+    raise FileNotFoundError(f"Library '{library_name}' not found")
+
 class TidesDB:
+    """TidesDB main database class."""
+    
     def __init__(self, tdb):
         self.tdb = tdb
 
     @staticmethod
-    def open(directory):
+    def open(directory: str) -> 'TidesDB':
         c_dir = create_string_buffer(directory.encode('utf-8'))
         tdb = POINTER(ctypes.c_void_p)()
         result = lib.tidesdb_open(c_dir, byref(tdb))
@@ -55,33 +42,30 @@ class TidesDB:
         return TidesDB(tdb)
 
     def close(self):
-        result = lib.tidesdb_close(self.tdb)
-        if result != 0:
-            raise Exception("Failed to close TidesDB")
+        if hasattr(self, 'tdb'):
+            result = lib.tidesdb_close(self.tdb)
+            if result != 0:
+                raise Exception("Failed to close TidesDB")
 
-    def create_column_family(self, name, flush_threshold, max_level, probability, compressed, compress_algo, bloom_filter, memtable_ds):
+    def create_column_family(self, name, flush_threshold, max_level, probability, 
+                        compressed, compress_algo, bloom_filter, memtable_ds):
         c_name = create_string_buffer(name.encode('utf-8'))
-        result = lib.tidesdb_create_column_family(self.tdb, c_name, c_int(flush_threshold), c_int(max_level), c_float(probability), c_bool(compressed), c_int(compress_algo), c_bool(bloom_filter), c_int(memtable_ds))
+        result = lib.tidesdb_create_column_family(
+            self.tdb, c_name, c_int(flush_threshold), c_int(max_level),
+            c_float(probability), c_bool(compressed), c_int(compress_algo),
+            c_bool(bloom_filter), c_int(memtable_ds)
+        )
         if result != 0:
             raise Exception("Failed to create column family")
-
-    def drop_column_family(self, name):
-        c_name = create_string_buffer(name.encode('utf-8'))
-        result = lib.tidesdb_drop_column_family(self.tdb, c_name)
-        if result != 0:
-            raise Exception("Failed to drop column family")
-
-    def compact_sstables(self, column_family_name, max_threads):
-        c_name = create_string_buffer(column_family_name.encode('utf-8'))
-        result = lib.tidesdb_compact_sstables(self.tdb, c_name, c_int(max_threads))
-        if result != 0:
-            raise Exception("Failed to compact SSTables")
 
     def put(self, column_family_name, key, value, ttl):
         c_name = create_string_buffer(column_family_name.encode('utf-8'))
         c_key = (c_uint8 * len(key)).from_buffer_copy(key)
         c_value = (c_uint8 * len(value)).from_buffer_copy(value)
-        result = lib.tidesdb_put(self.tdb, c_name, c_key, c_size_t(len(key)), c_value, c_size_t(len(value)), c_time_t(ttl))
+        result = lib.tidesdb_put(
+            self.tdb, c_name, c_key, c_size_t(len(key)),
+            c_value, c_size_t(len(value)), c_time_t(ttl)
+        )
         if result != 0:
             raise Exception("Failed to put key-value pair")
 
@@ -90,7 +74,10 @@ class TidesDB:
         c_key = (c_uint8 * len(key)).from_buffer_copy(key)
         c_value = POINTER(c_uint8)()
         c_value_size = c_size_t()
-        result = lib.tidesdb_get(self.tdb, c_name, c_key, c_size_t(len(key)), byref(c_value), byref(c_value_size))
+        result = lib.tidesdb_get(
+            self.tdb, c_name, c_key, c_size_t(len(key)),
+            byref(c_value), byref(c_value_size)
+        )
         if result != 0:
             raise Exception("Failed to get value")
         return bytes((c_uint8 * c_value_size.value).from_address(ctypes.addressof(c_value.contents)))
@@ -102,19 +89,14 @@ class TidesDB:
         if result != 0:
             raise Exception("Failed to delete key-value pair")
 
-    def list_column_families(self):
-        cf_list = lib.tidesdb_list_column_families(self.tdb)
-        if not cf_list:
-            raise Exception("Failed to list column families")
-        return ctypes.string_at(cf_list).decode('utf-8')
-
-# Cursor class to iterate over a column family key value pairs
 class Cursor:
+    """Cursor class for iterating over column family key-value pairs."""
+    
     def __init__(self, cursor):
         self.cursor = cursor
 
     @staticmethod
-    def init(db, column_family):
+    def init(db: TidesDB, column_family: str) -> 'Cursor':
         c_name = create_string_buffer(column_family.encode('utf-8'))
         cursor = POINTER(ctypes.c_void_p)()
         result = lib.tidesdb_cursor_init(db.tdb, c_name, byref(cursor))
@@ -137,7 +119,8 @@ class Cursor:
         c_key_size = c_size_t()
         c_value = POINTER(c_uint8)()
         c_value_size = c_size_t()
-        result = lib.tidesdb_cursor_get(self.cursor, byref(c_key), byref(c_key_size), byref(c_value), byref(c_value_size))
+        result = lib.tidesdb_cursor_get(self.cursor, byref(c_key), byref(c_key_size),
+                                      byref(c_value), byref(c_value_size))
         if result != 0:
             raise Exception("Failed to get key-value pair from cursor")
         key = bytes((c_uint8 * c_key_size.value).from_address(ctypes.addressof(c_key.contents)))
@@ -149,13 +132,14 @@ class Cursor:
         if result != 0:
             raise Exception("Failed to free cursor")
 
-# Transaction class for TidesDB column family transactions
 class Transaction:
+    """Transaction class for atomic operations on column families."""
+    
     def __init__(self, txn):
         self.txn = txn
 
     @staticmethod
-    def begin(db, column_family):
+    def begin(db: TidesDB, column_family: str) -> 'Transaction':
         c_name = create_string_buffer(column_family.encode('utf-8'))
         txn = POINTER(ctypes.c_void_p)()
         result = lib.tidesdb_txn_begin(db.tdb, byref(txn), c_name)
@@ -166,7 +150,8 @@ class Transaction:
     def put(self, key, value, ttl):
         c_key = (c_uint8 * len(key)).from_buffer_copy(key)
         c_value = (c_uint8 * len(value)).from_buffer_copy(value)
-        result = lib.tidesdb_txn_put(self.txn, c_key, c_size_t(len(key)), c_value, c_size_t(len(value)), c_time_t(ttl))
+        result = lib.tidesdb_txn_put(self.txn, c_key, c_size_t(len(key)),
+                                    c_value, c_size_t(len(value)), c_time_t(ttl))
         if result != 0:
             raise Exception("Failed to put key-value pair in transaction")
 
