@@ -42,6 +42,21 @@ if library_path:
 else:
     raise FileNotFoundError(f"Library '{library_name}' not found")
 
+lib.tidesdb_compact_sstables.argtypes = [
+    POINTER(ctypes.c_void_p),
+    c_char_p,
+    c_int
+]
+lib.tidesdb_compact_sstables.restype = c_int
+
+lib.tidesdb_start_background_partial_merge.argtypes = [
+    POINTER(ctypes.c_void_p),
+    c_char_p,
+    c_int,
+    c_int
+]
+lib.tidesdb_start_background_partial_merge.restype = c_int
+
 class TidesDB:
     """TidesDB main database class."""
     
@@ -104,6 +119,18 @@ class TidesDB:
         result = lib.tidesdb_delete(self.tdb, c_name, c_key, c_size_t(len(key)))
         if result != 0:
             raise Exception("Failed to delete key-value pair")
+        
+    def compact_sstables(self, column_family_name, max_threads):
+        c_name = create_string_buffer(column_family_name.encode('utf-8'))
+        result = lib.tidesdb_compact_sstables(self.tdb, c_name, c_int(max_threads))
+        if result != 0:
+            raise Exception("Failed to compact SSTables")
+
+    def start_background_compaction(self, column_family_name, interval_seconds, min_sstables):
+        c_name = create_string_buffer(column_family_name.encode('utf-8'))
+        result = lib.tidesdb_start_background_partial_merge(self.tdb, c_name, c_int(interval_seconds), c_int(min_sstables))
+        if result != 0:
+            raise Exception("Failed to start background compaction")
 
 class Cursor:
     """Cursor class for iterating over column family key-value pairs."""
