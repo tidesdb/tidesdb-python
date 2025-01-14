@@ -27,6 +27,9 @@ cd tidesdb-python
 
 # Run the setup script
 ./setup.sh
+
+# Activate the virtual environment
+source venv/bin/activate  # Your prompt should show (venv) at the beginning
 ```
 
 #### Windows
@@ -38,6 +41,10 @@ cd tidesdb-python
 
 # Run the setup script
 .\setup.ps1
+
+# Activate the virtual environment
+# For Windows (PowerShell or Command Prompt):
+venv\Scripts\activate  # Your prompt should show (venv) at the beginning
 ```
 
 ### Understanding the Setup Process
@@ -48,15 +55,20 @@ The installation process consists of several important steps:
    - The setup scripts automatically clone and configure the TidesDB C foundation (`cfoundation/`).
    - This component is crucial as it provides the core database functionality that the Python bindings interact with.
    - The scripts handle:
-     - Cloning the C foundation repository
+     - Cloning the C foundation repository (only essential files)
      - Configuring build options for optimal performance
      - Building and installing the C library
      - Integrating it seamlessly with the Python bindings
 
 2. **Python Environment**
-   - Creates a virtual environment for isolated package management
-   - Installs all required Python dependencies
-   - Sets up the Python package in development mode
+   - The setup script automatically:
+     - Creates a virtual environment for isolated package management
+     - Installs all required Python dependencies
+     - Sets up the Python package in development mode
+   - After installation, you must manually activate the virtual environment:
+     - For Linux/macOS: `source venv/bin/activate`
+     - For Windows: `venv\Scripts\activate`
+     - Once activated, your prompt should show (venv) at the beginning
 
 #### Automated Setup Details
 
