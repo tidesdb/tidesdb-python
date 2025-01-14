@@ -5,10 +5,13 @@ set -e  # Stop the script in case of error
 # Define C library repository
 CLIB_REPO="https://github.com/tidesdb/tidesdb"
 
-# Clone and set up C foundation
-echo "Cloning TidesDB C foundation..."
-git clone "$CLIB_REPO" cfoundation
+# Clone with sparse checkout
+echo "Cloning TidesDB C foundation (minimal)..."
+git clone --filter=blob:none --sparse "$CLIB_REPO" cfoundation
 cd cfoundation
+
+# Configure sparse checkout patterns
+git sparse-checkout set --no-cone '/*' '!artwork/' '!test/' '!.github/' '!CODE_OF_CONDUCT.md' '!CONTRIBUTING.md' '!LICENSE' '!README.md' '!SECURITY.md' '!.gitignore'
 
 # Remove .git directory as it will be part of the main project
 echo "Cleaning up git history..."
