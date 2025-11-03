@@ -1,0 +1,79 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tidesdb"
+version = "1.0.0"
+description = "Official Python bindings for TidesDB v1+"
+readme = "README_PYTHON.md"
+requires-python = ">=3.7"
+license = {text = "MPL-2.0"}
+authors = [
+    {name = "TidesDB Team", email = "support@tidesdb.com"}
+]
+maintainers = [
+    {name = "TidesDB Team", email = "support@tidesdb.com"}
+]
+keywords = [
+    "database",
+    "key-value",
+    "lsm-tree",
+    "embedded",
+    "storage-engine",
+    "tidesdb"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Database",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed"
+]
+
+[project.urls]
+Homepage = "https://github.com/tidesdb/tidesdb-python"
+Documentation = "https://github.com/tidesdb/tidesdb"
+Repository = "https://github.com/tidesdb/tidesdb-python"
+"Bug Tracker" = "https://github.com/tidesdb/tidesdb-python/issues"
+Discord = "https://discord.gg/tWEmjR66cy"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+]
+
+[tool.black]
+line-length = 100
+target-version = ['py37', 'py38', 'py39', 'py310', 'py311', 'py312']
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --cov=tidesdb --cov-report=html --cov-report=term"
+
+[tool.mypy]
+python_version = "3.7"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

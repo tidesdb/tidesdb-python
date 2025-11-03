@@ -1,20 +1,35 @@
 """
 TidesDB Python Bindings
+
+Official Python bindings for TidesDB v1+.
 """
-from .core import (
+
+from .tidesdb import (
     TidesDB,
-    TidesDBCompressionAlgo,
-    TidesDBMemtableDS,
-    Cursor,
     Transaction,
+    Iterator,
+    ColumnFamily,
+    ColumnFamilyConfig,
+    ColumnFamilyStat,
+    CompressionAlgo,
+    SyncMode,
+    ErrorCode,
+    TidesDBException,
 )
 
-__version__ = "0.5.0"
+__version__ = "1.0.0"
+__author__ = "TidesDB Authors"
+__license__ = "MPL-2.0"
 
 __all__ = [
     'TidesDB',
-    'TidesDBCompressionAlgo',
-    'TidesDBMemtableDS',
-    'Cursor',
     'Transaction',
+    'Iterator',
+    'ColumnFamily',
+    'ColumnFamilyConfig',
+    'ColumnFamilyStat',
+    'CompressionAlgo',
+    'SyncMode',
+    'ErrorCode',
+    'TidesDBException',
 ]
