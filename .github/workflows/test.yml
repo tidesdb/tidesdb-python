@@ -1,0 +1,195 @@
+name: Test TidesDB Python Bindings
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }} with Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
+
+    steps:
+    - name: Checkout Python bindings
+      uses: actions/checkout@v4
+
+    - name: Checkout TidesDB main repo
+      uses: actions/checkout@v4
+      with:
+        repository: tidesdb/tidesdb
+        path: tidesdb-core
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    # Ubuntu dependencies
+    - name: Install dependencies (Ubuntu)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          libzstd-dev \
+          liblz4-dev \
+          libsnappy-dev \
+          libssl-dev
+
+    # macOS dependencies
+    - name: Install dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew install \
+          cmake \
+          zstd \
+          lz4 \
+          snappy \
+          openssl@3
+
+    # Windows dependencies
+    - name: Install dependencies (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System'
+        vcpkg install zstd:x64-windows lz4:x64-windows snappy:x64-windows openssl:x64-windows
+      shell: powershell
+
+    # Build and install TidesDB C library (Ubuntu/macOS)
+    - name: Build TidesDB (Unix)
+      if: runner.os != 'Windows'
+      working-directory: tidesdb-core
+      run: |
+        rm -rf build
+        cmake -S . -B build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DTIDESDB_WITH_SANITIZER=OFF \
+          -DTIDESDB_BUILD_TESTS=OFF
+        cmake --build build
+        sudo cmake --install build
+
+    # Build and install TidesDB C library (Windows)
+    - name: Build TidesDB (Windows)
+      if: runner.os == 'Windows'
+      working-directory: tidesdb-core
+      run: |
+        cmake -S . -B build `
+          -DCMAKE_BUILD_TYPE=Release `
+          -DTIDESDB_WITH_SANITIZER=OFF `
+          -DTIDESDB_BUILD_TESTS=OFF `
+          -DCMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+        cmake --build build --config Release
+        cmake --install build --config Release
+      shell: powershell
+
+    # Update library paths (Ubuntu)
+    - name: Update library cache (Ubuntu)
+      if: runner.os == 'Linux'
+      run: sudo ldconfig
+
+    # Update library paths (macOS)
+    - name: Set library path (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        echo "DYLD_LIBRARY_PATH=/usr/local/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
+
+    # Update library paths (Windows)
+    - name: Set library path (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        echo "$env:ProgramFiles\TidesDB\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      shell: powershell
+
+    # Install Python dependencies
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-cov
+
+    # Install Python bindings
+    - name: Install TidesDB Python bindings
+      run: |
+        pip install -e .
+
+    # Run tests
+    - name: Run tests
+      run: |
+        pytest test_tidesdb.py -v --cov=tidesdb --cov-report=xml --cov-report=term
+
+    # Upload coverage
+    - name: Upload coverage to Codecov
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  lint:
+    name: Lint and Format Check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install linting tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install black flake8 mypy
+
+    - name: Check formatting with black
+      run: |
+        black --check --line-length 100 tidesdb.py test_tidesdb.py
+
+    - name: Lint with flake8
+      run: |
+        flake8 tidesdb.py test_tidesdb.py --max-line-length=100 --ignore=E203,W503
+
+    - name: Type check with mypy
+      run: |
+        mypy tidesdb.py --ignore-missing-imports
+      continue-on-error: true
+
+  package:
+    name: Build Package
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install build tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine
+
+    - name: Build package
+      run: |
+        python -m build
+
+    - name: Check package
+      run: |
+        twine check dist/*
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-package
+        path: dist/
