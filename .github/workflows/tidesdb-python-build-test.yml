@@ -1,4 +1,4 @@
-name: Test TidesDB Python Bindings
+name: TidesDB Python Workflow
 
 on:
   push:
@@ -123,7 +123,7 @@ jobs:
     # Run tests
     - name: Run tests
       run: |
-        pytest test_tidesdb.py -v --cov=tidesdb --cov-report=xml --cov-report=term
+        pytest
 
     # Upload coverage
     - name: Upload coverage to Codecov
@@ -153,15 +153,15 @@ jobs:
 
     - name: Check formatting with black
       run: |
-        black --check --line-length 100 tidesdb.py test_tidesdb.py
+        black --check tidesdb/ tests/
 
     - name: Lint with flake8
       run: |
-        flake8 tidesdb.py test_tidesdb.py --max-line-length=100 --ignore=E203,W503
+        flake8 tidesdb/ tests/ --max-line-length=100 --ignore=E203,W503
 
     - name: Type check with mypy
       run: |
-        mypy tidesdb.py --ignore-missing-imports
+        mypy tidesdb/ --ignore-missing-imports
       continue-on-error: true
 
   package:

@@ -133,7 +133,7 @@ class TidesDBException(Exception):
 class CConfig(Structure):
     """C structure for tidesdb_config_t."""
     _fields_ = [
-        ("db_path", c_char_p),
+        ("db_path", ctypes.c_char * 1024),  # TDB_MAX_PATH_LENGTH = 1024
         ("enable_debug_logging", c_int),
         ("max_open_file_handles", c_int),
     ]
@@ -684,14 +684,18 @@ class TidesDB:
         # Convert to absolute path
         abs_path = os.path.abspath(path)
         
-        # CRITICAL: Keep both bytes and config as instance variables
-        # The C library stores the pointer from the config struct
-        self._db_path_bytes = abs_path.encode('utf-8')
+        # Encode path and ensure it fits in TDB_MAX_PATH_LENGTH (1024 bytes)
+        path_bytes = abs_path.encode('utf-8')
+        if len(path_bytes) >= 1024:
+            raise ValueError(f"Database path too long (max 1023 bytes): {abs_path}")
+        
+        # Create config with fixed-size char array
         self._config = CConfig(
-            db_path=self._db_path_bytes,
             enable_debug_logging=1 if enable_debug_logging else 0,
             max_open_file_handles=max_open_file_handles
         )
+        # Copy path into the fixed-size array
+        self._config.db_path = path_bytes
         
         db_ptr = c_void_p()
         result = _lib.tidesdb_open(ctypes.byref(self._config), ctypes.byref(db_ptr))
