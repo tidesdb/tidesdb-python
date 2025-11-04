@@ -45,13 +45,17 @@ class TestTidesDB(unittest.TestCase):
         """Test database as context manager."""
         with TidesDB(self.test_db_path) as db:
             self.assertIsNotNone(db)
+            # Create a CF with background compaction disabled 
+            config = ColumnFamilyConfig(enable_background_compaction=False)
+            db.create_column_family("test_cf", config)
         # Database should be closed after context
     
     def test_create_drop_column_family(self):
         """Test creating and dropping column families."""
         with TidesDB(self.test_db_path) as db:
-            # Create with default config
-            db.create_column_family("test_cf")
+            # Create with background compaction disabled
+            config = ColumnFamilyConfig(enable_background_compaction=False)
+            db.create_column_family("test_cf", config)
             
             # Verify it exists
             cf_list = db.list_column_families()
@@ -92,10 +96,11 @@ class TestTidesDB(unittest.TestCase):
     def test_list_column_families(self):
         """Test listing column families."""
         with TidesDB(self.test_db_path) as db:
-            # Create multiple column families
+            # Create multiple column families with background compaction disabled
+            config = ColumnFamilyConfig(enable_background_compaction=False)
             cf_names = ["cf1", "cf2", "cf3"]
             for name in cf_names:
-                db.create_column_family(name)
+                db.create_column_family(name, config)
             
             # List them
             cf_list = db.list_column_families()
@@ -107,7 +112,8 @@ class TestTidesDB(unittest.TestCase):
     def test_transaction_put_get_delete(self):
         """Test basic CRUD operations with transactions."""
         with TidesDB(self.test_db_path) as db:
-            db.create_column_family("test_cf")
+            config = ColumnFamilyConfig(enable_background_compaction=False)
+            db.create_column_family("test_cf", config)
             
             # Put data
             with db.begin_txn() as txn:
@@ -136,7 +142,8 @@ class TestTidesDB(unittest.TestCase):
     def test_transaction_with_ttl(self):
         """Test transactions with TTL."""
         with TidesDB(self.test_db_path) as db:
-            db.create_column_family("test_cf")
+            config = ColumnFamilyConfig(enable_background_compaction=False)
+            db.create_column_family("test_cf", config)
             
             # Put with TTL (2 seconds from now)
             ttl = int(time.time()) + 2
@@ -160,7 +167,8 @@ class TestTidesDB(unittest.TestCase):
     def test_multi_operation_transaction(self):
         """Test transaction with multiple operations."""
         with TidesDB(self.test_db_path) as db:
-            db.create_column_family("test_cf")
+            config = ColumnFamilyConfig(enable_background_compaction=False)
+            db.create_column_family("test_cf", config)
             
             # Multiple operations in one transaction
             with db.begin_txn() as txn:
@@ -181,7 +189,8 @@ class TestTidesDB(unittest.TestCase):
     def test_transaction_rollback(self):
         """Test transaction rollback."""
         with TidesDB(self.test_db_path) as db:
-            db.create_column_family("test_cf")
+            config = ColumnFamilyConfig(enable_background_compaction=False)
+            db.create_column_family("test_cf", config)
             
             # Put some data and rollback
             with db.begin_txn() as txn:
@@ -196,7 +205,8 @@ class TestTidesDB(unittest.TestCase):
     def test_transaction_auto_rollback_on_exception(self):
         """Test transaction automatically rolls back on exception."""
         with TidesDB(self.test_db_path) as db:
-            db.create_column_family("test_cf")
+            config = ColumnFamilyConfig(enable_background_compaction=False)
+            db.create_column_family("test_cf", config)
             
             # Exception in context manager should trigger rollback
             try:
@@ -214,7 +224,8 @@ class TestTidesDB(unittest.TestCase):
     def test_iterator_forward(self):
         """Test forward iteration."""
         with TidesDB(self.test_db_path) as db:
-            db.create_column_family("test_cf")
+            config = ColumnFamilyConfig(enable_background_compaction=False)
+            db.create_column_family("test_cf", config)
             
             # Insert test data
             test_data = {
@@ -251,7 +262,8 @@ class TestTidesDB(unittest.TestCase):
     def test_iterator_backward(self):
         """Test backward iteration."""
         with TidesDB(self.test_db_path) as db:
-            db.create_column_family("test_cf")
+            config = ColumnFamilyConfig(enable_background_compaction=False)
+            db.create_column_family("test_cf", config)
             
             # Insert test data
             test_data = {
@@ -286,7 +298,8 @@ class TestTidesDB(unittest.TestCase):
     def test_iterator_as_python_iterator(self):
         """Test iterator as Python iterator."""
         with TidesDB(self.test_db_path) as db:
-            db.create_column_family("test_cf")
+            config = ColumnFamilyConfig(enable_background_compaction=False)
+            db.create_column_family("test_cf", config)
             
             # Insert test data
             test_data = {
@@ -439,7 +452,8 @@ class TestTidesDB(unittest.TestCase):
     def test_pickle_support(self):
         """Test storing Python objects with pickle."""
         with TidesDB(self.test_db_path) as db:
-            db.create_column_family("test_cf")
+            config = ColumnFamilyConfig(enable_background_compaction=False)
+            db.create_column_family("test_cf", config)
             
             # Store complex Python object
             test_obj = {
@@ -476,7 +490,8 @@ class TestTidesDB(unittest.TestCase):
                 db.drop_column_family("nonexistent_cf")
             
             # Try to get from non-existent CF
-            db.create_column_family("test_cf")
+            config = ColumnFamilyConfig(enable_background_compaction=False)
+            db.create_column_family("test_cf", config)
             with db.begin_read_txn() as txn:
                 with self.assertRaises(TidesDBException):
                     txn.get("nonexistent_cf", b"key")
@@ -484,7 +499,8 @@ class TestTidesDB(unittest.TestCase):
     def test_large_values(self):
         """Test storing large values."""
         with TidesDB(self.test_db_path) as db:
-            db.create_column_family("test_cf")
+            config = ColumnFamilyConfig(enable_background_compaction=False)
+            db.create_column_family("test_cf", config)
             
             # Store 1MB value
             large_value = b"x" * (1024 * 1024)
@@ -502,7 +518,8 @@ class TestTidesDB(unittest.TestCase):
     def test_many_keys(self):
         """Test storing many keys."""
         with TidesDB(self.test_db_path) as db:
-            db.create_column_family("test_cf")
+            config = ColumnFamilyConfig(enable_background_compaction=False)
+            db.create_column_family("test_cf", config)
             
             num_keys = 1000
             

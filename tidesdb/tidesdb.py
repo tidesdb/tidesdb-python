@@ -48,6 +48,28 @@ def _load_library():
 _lib = _load_library()
 
 
+def _get_libc():
+    """Get the C standard library for memory management operations."""
+    import sys
+    from ctypes.util import find_library
+    
+    if sys.platform == 'win32':
+        return ctypes.cdll.msvcrt
+    else:
+        # Use find_library to locate the correct libc
+        libc_name = find_library('c')
+        if libc_name:
+            return ctypes.CDLL(libc_name)
+        # Fallback to platform-specific names
+        elif sys.platform == 'darwin':
+            return ctypes.CDLL('libc.dylib')
+        else:
+            return ctypes.CDLL('libc.so.6')
+
+
+_libc = _get_libc()
+
+
 # Error codes
 class ErrorCode(IntEnum):
     """TidesDB error codes."""
@@ -133,7 +155,7 @@ class TidesDBException(Exception):
 class CConfig(Structure):
     """C structure for tidesdb_config_t."""
     _fields_ = [
-        ("db_path", c_char_p),
+        ("db_path", ctypes.c_char * 1024),  # TDB_MAX_PATH_LENGTH = 1024
         ("enable_debug_logging", c_int),
         ("max_open_file_handles", c_int),
     ]
@@ -427,7 +449,7 @@ class Iterator:
         if result != ErrorCode.TDB_SUCCESS:
             raise TidesDBException.from_code(result, "failed to get key")
         
-        # Note: key_ptr points to internal iterator memory, do NOT free it
+        # key_ptr points to internal iterator memory, do NOT free it
         return ctypes.string_at(key_ptr, key_size.value)
     
     def value(self) -> bytes:
@@ -442,7 +464,7 @@ class Iterator:
         if result != ErrorCode.TDB_SUCCESS:
             raise TidesDBException.from_code(result, "failed to get value")
         
-        # Note: value_ptr points to internal iterator memory, do NOT free it
+        # value_ptr points to internal iterator memory, do NOT free it
         return ctypes.string_at(value_ptr, value_size.value)
     
     def items(self) -> List[Tuple[bytes, bytes]]:
@@ -549,8 +571,7 @@ class Transaction:
         value = ctypes.string_at(value_ptr, value_size.value)
         
         # Free the malloc'd value (C API allocates with malloc)
-        libc = ctypes.CDLL(None)
-        libc.free(ctypes.cast(value_ptr, ctypes.c_void_p))
+        _libc.free(ctypes.cast(value_ptr, ctypes.c_void_p))
         return value
     
     def delete(self, column_family: str, key: bytes) -> None:
@@ -684,14 +705,18 @@ class TidesDB:
         # Convert to absolute path
         abs_path = os.path.abspath(path)
         
-        # CRITICAL: Keep both bytes and config as instance variables
-        # The C library stores the pointer from the config struct
-        self._db_path_bytes = abs_path.encode('utf-8')
+        # Encode path and ensure it fits in TDB_MAX_PATH_LENGTH (1024 bytes)
+        path_bytes = abs_path.encode('utf-8')
+        if len(path_bytes) >= 1024:
+            raise ValueError(f"Database path too long (max 1023 bytes): {abs_path}")
+        
+        # Create config with fixed-size char array
         self._config = CConfig(
-            db_path=self._db_path_bytes,
             enable_debug_logging=1 if enable_debug_logging else 0,
             max_open_file_handles=max_open_file_handles
         )
+        # Copy path into the fixed-size array
+        self._config.db_path = path_bytes
         
         db_ptr = c_void_p()
         result = _lib.tidesdb_open(ctypes.byref(self._config), ctypes.byref(db_ptr))
@@ -788,27 +813,24 @@ class TidesDB:
             return []
         
         names = []
-        libc = ctypes.CDLL(None)
         
         # Copy all strings first before freeing anything
-        string_ptrs = []
         for i in range(count.value):
             # names_array_ptr[i] automatically dereferences to get the char* value
             name_bytes = names_array_ptr[i]
             if name_bytes:
                 names.append(name_bytes.decode('utf-8'))
-                # Store the pointer value for freeing
-                # We need to get the actual pointer address, not the dereferenced value
-                ptr_addr = ctypes.cast(names_array_ptr, ctypes.POINTER(ctypes.c_void_p))[i]
-                string_ptrs.append(ptr_addr)
         
-        # Now free each string
-        for ptr in string_ptrs:
+        # Now free each string pointer
+        # We need to reinterpret the array as void pointers to free them
+        void_ptr_array = ctypes.cast(names_array_ptr, ctypes.POINTER(ctypes.c_void_p))
+        for i in range(count.value):
+            ptr = void_ptr_array[i]
             if ptr:
-                libc.free(ptr)
+                _libc.free(ptr)
         
         # Free the array itself
-        libc.free(ctypes.cast(names_array_ptr, ctypes.c_void_p))
+        _libc.free(ctypes.cast(names_array_ptr, ctypes.c_void_p))
         
         return names
     
@@ -861,8 +883,7 @@ class TidesDB:
         )
         
         # Free the malloc'd stats structure (C API requires caller to free)
-        libc = ctypes.CDLL(None)
-        libc.free(ctypes.cast(stats_ptr, ctypes.c_void_p))
+        _libc.free(ctypes.cast(stats_ptr, ctypes.c_void_p))
         return stats
     
     def begin_txn(self) -> Transaction:
