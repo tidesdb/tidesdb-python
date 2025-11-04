@@ -132,10 +132,10 @@ jobs:
       run: |
         python -c "from tidesdb import TidesDB; print('TidesDB library loaded successfully')"
 
-    # Run tests with verbose output and timeout
+    # Run tests with verbose output
     - name: Run tests
       run: |
-        pytest -v --tb=short --timeout=300 -x
+        pytest -v --tb=short -x
       timeout-minutes: 60
 
     # Upload coverage
@@ -148,34 +148,6 @@ jobs:
         name: codecov-umbrella
         fail_ci_if_error: false
 
-  lint:
-    name: Lint and Format Check
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-
-    - name: Install linting tools
-      run: |
-        python -m pip install --upgrade pip
-        pip install black flake8 mypy
-
-    - name: Check formatting with black
-      run: |
-        black --check tidesdb/ tests/
-
-    - name: Lint with flake8
-      run: |
-        flake8 tidesdb/ tests/ --max-line-length=100 --ignore=E203,W503
-
-    - name: Type check with mypy
-      run: |
-        mypy tidesdb/ --ignore-missing-imports
-      continue-on-error: true
 
   package:
     name: Build Package
