@@ -51,12 +51,20 @@ _lib = _load_library()
 def _get_libc():
     """Get the C standard library for memory management operations."""
     import sys
+    from ctypes.util import find_library
+    
     if sys.platform == 'win32':
         return ctypes.cdll.msvcrt
-    elif sys.platform == 'darwin':
-        return ctypes.CDLL('libc.dylib')
     else:
-        return ctypes.CDLL('libc.so.6')
+        # Use find_library to locate the correct libc
+        libc_name = find_library('c')
+        if libc_name:
+            return ctypes.CDLL(libc_name)
+        # Fallback to platform-specific names
+        elif sys.platform == 'darwin':
+            return ctypes.CDLL('libc.dylib')
+        else:
+            return ctypes.CDLL('libc.so.6')
 
 
 _libc = _get_libc()
