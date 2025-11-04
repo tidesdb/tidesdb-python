@@ -48,6 +48,20 @@ def _load_library():
 _lib = _load_library()
 
 
+def _get_libc():
+    """Get the C standard library for memory management operations."""
+    import sys
+    if sys.platform == 'win32':
+        return ctypes.cdll.msvcrt
+    elif sys.platform == 'darwin':
+        return ctypes.CDLL('libc.dylib')
+    else:
+        return ctypes.CDLL('libc.so.6')
+
+
+_libc = _get_libc()
+
+
 # Error codes
 class ErrorCode(IntEnum):
     """TidesDB error codes."""
@@ -427,7 +441,7 @@ class Iterator:
         if result != ErrorCode.TDB_SUCCESS:
             raise TidesDBException.from_code(result, "failed to get key")
         
-        # Note: key_ptr points to internal iterator memory, do NOT free it
+        # key_ptr points to internal iterator memory, do NOT free it
         return ctypes.string_at(key_ptr, key_size.value)
     
     def value(self) -> bytes:
@@ -442,7 +456,7 @@ class Iterator:
         if result != ErrorCode.TDB_SUCCESS:
             raise TidesDBException.from_code(result, "failed to get value")
         
-        # Note: value_ptr points to internal iterator memory, do NOT free it
+        # value_ptr points to internal iterator memory, do NOT free it
         return ctypes.string_at(value_ptr, value_size.value)
     
     def items(self) -> List[Tuple[bytes, bytes]]:
@@ -549,8 +563,7 @@ class Transaction:
         value = ctypes.string_at(value_ptr, value_size.value)
         
         # Free the malloc'd value (C API allocates with malloc)
-        libc = ctypes.CDLL(None)
-        libc.free(ctypes.cast(value_ptr, ctypes.c_void_p))
+        _libc.free(ctypes.cast(value_ptr, ctypes.c_void_p))
         return value
     
     def delete(self, column_family: str, key: bytes) -> None:
@@ -792,27 +805,24 @@ class TidesDB:
             return []
         
         names = []
-        libc = ctypes.CDLL(None)
         
         # Copy all strings first before freeing anything
-        string_ptrs = []
         for i in range(count.value):
             # names_array_ptr[i] automatically dereferences to get the char* value
             name_bytes = names_array_ptr[i]
             if name_bytes:
                 names.append(name_bytes.decode('utf-8'))
-                # Store the pointer value for freeing
-                # We need to get the actual pointer address, not the dereferenced value
-                ptr_addr = ctypes.cast(names_array_ptr, ctypes.POINTER(ctypes.c_void_p))[i]
-                string_ptrs.append(ptr_addr)
         
-        # Now free each string
-        for ptr in string_ptrs:
+        # Now free each string pointer
+        # We need to reinterpret the array as void pointers to free them
+        void_ptr_array = ctypes.cast(names_array_ptr, ctypes.POINTER(ctypes.c_void_p))
+        for i in range(count.value):
+            ptr = void_ptr_array[i]
             if ptr:
-                libc.free(ptr)
+                _libc.free(ptr)
         
         # Free the array itself
-        libc.free(ctypes.cast(names_array_ptr, ctypes.c_void_p))
+        _libc.free(ctypes.cast(names_array_ptr, ctypes.c_void_p))
         
         return names
     
@@ -865,8 +875,7 @@ class TidesDB:
         )
         
         # Free the malloc'd stats structure (C API requires caller to free)
-        libc = ctypes.CDLL(None)
-        libc.free(ctypes.cast(stats_ptr, ctypes.c_void_p))
+        _libc.free(ctypes.cast(stats_ptr, ctypes.c_void_p))
         return stats
     
     def begin_txn(self) -> Transaction:
