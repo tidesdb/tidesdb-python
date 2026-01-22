@@ -177,5 +177,8 @@ jobs:
         run: |
           export PATH="/mingw64/bin:$PATH"
           cd tidesdb-python
-          pip install -e ".[dev]"
+          python -m venv venv
+          source venv/bin/activate
+          pip install pytest pytest-cov
+          pip install -e .
           pytest -v
