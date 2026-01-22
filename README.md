@@ -1,6 +1,8 @@
-# TidesDB Python
+# tidesdb-python
 
-Official Python package for [TidesDB](https://tidesdb.com).
+tidesdb-python is the official Python binding for TidesDB.
+
+TidesDB is a fast and efficient key-value storage engine library written in C. The underlying data structure is based on a log-structured merge-tree (LSM-tree). This Python binding provides a safe, idiomatic Python interface to TidesDB with full support for all features.
 
 ## Features
 
@@ -13,6 +15,8 @@ Official Python package for [TidesDB](https://tidesdb.com).
 - Global block CLOCK cache for hot blocks
 - Savepoints for partial transaction rollback
 - Six built-in comparators plus custom registration
+
+For Python usage you can go to the TidesDB Python Reference at [TidesDB Python Reference](https://tidesdb.com/reference/python/).
 
 ## License
 
