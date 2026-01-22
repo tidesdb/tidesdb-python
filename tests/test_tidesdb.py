@@ -325,6 +325,7 @@ class TestMaintenance:
             txn.commit()
 
         cf.flush_memtable()
+        time.sleep(0.5)
 
     def test_compact(self, db, cf):
         """Test manual compaction."""
@@ -334,10 +335,12 @@ class TestMaintenance:
             txn.commit()
 
         cf.flush_memtable()
+        time.sleep(0.5)
         try:
             cf.compact()
         except tidesdb.TidesDBError:
             pass
+        time.sleep(0.5)
 
 
 if __name__ == "__main__":
