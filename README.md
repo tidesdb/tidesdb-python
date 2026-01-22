@@ -16,7 +16,7 @@ TidesDB is a fast and efficient key-value storage engine library written in C. T
 - Savepoints for partial transaction rollback
 - Six built-in comparators plus custom registration
 
-For Python usage you can go to the TidesDB Python Reference at [TidesDB Python Reference](https://tidesdb.com/reference/python/).
+For Python usage you can go to the TidesDB Python Reference [here](https://tidesdb.com/reference/python/).
 
 ## License
 
@@ -36,4 +36,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 - [Discord](https://discord.gg/tWEmjR66cy)
 - [GitHub Issues](https://github.com/tidesdb/tidesdb-python/issues)
-- [Documentation](https://tidesdb.com/reference/python/)
