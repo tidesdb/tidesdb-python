@@ -14,6 +14,8 @@ Official Python package for [TidesDB](https://tidesdb.com).
 - Savepoints for partial transaction rollback
 - Six built-in comparators plus custom registration
 
+For Python usage you can go to the TidesDB Python Reference at [TidesDB Python Reference](https://tidesdb.com/reference/python/).
+
 ## License
 
 Multiple licenses apply:
