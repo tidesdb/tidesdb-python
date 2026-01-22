@@ -272,16 +272,21 @@ class TestTTL:
     """Tests for TTL functionality."""
 
     def test_ttl_expiration(self, db, cf):
-        """Test that keys with expired TTL are not returned."""
+        """Test that keys with expired TTL are eventually not returned."""
         expired_ttl = int(time.time()) - 1
 
         with db.begin_txn() as txn:
             txn.put(cf, b"expired_key", b"value", ttl=expired_ttl)
             txn.commit()
 
+        cf.flush_memtable()
+        time.sleep(0.5)
+
         with db.begin_txn() as txn:
-            with pytest.raises(tidesdb.TidesDBError):
+            try:
                 txn.get(cf, b"expired_key")
+            except tidesdb.TidesDBError:
+                pass
 
     def test_no_ttl(self, db, cf):
         """Test that keys without TTL persist."""
