@@ -152,6 +152,7 @@ jobs:
             -S . -B build
           cmake --build build --config Release
           cmake --install build --prefix /mingw64
+          cp build/libtidesdb.dll /mingw64/bin/
 
       - name: Install Python
         uses: actions/setup-python@v5
