@@ -1,19 +1,19 @@
 [build-system]
-requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "tidesdb"
-version = "1.0.0"
-description = "Official Python bindings for TidesDB v1+"
-readme = "README_PYTHON.md"
-requires-python = ">=3.7"
+version = "0.5.0"
+description = "Official Python bindings for TidesDB - A high-performance embedded key-value storage engine"
+readme = "README.md"
+requires-python = ">=3.10"
 license = {text = "MPL-2.0"}
 authors = [
-    {name = "TidesDB Team", email = "support@tidesdb.com"}
+    {name = "TidesDB Lead/Creator", email = "me@alexpadula.com"}
 ]
 maintainers = [
-    {name = "TidesDB Team", email = "support@tidesdb.com"}
+    {name = "TidesDB Lead/Creator", email = "me@alexpadula.com"}
 ]
 keywords = [
     "database",
@@ -21,7 +21,9 @@ keywords = [
     "lsm-tree",
     "embedded",
     "storage-engine",
-    "tidesdb"
+    "tidesdb",
+    "mvcc",
+    "transactions"
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -29,20 +31,19 @@ classifiers = [
     "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.7",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Database",
+    "Topic :: Database :: Database Engines/Servers",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed"
 ]
 
 [project.urls]
-Homepage = "https://github.com/tidesdb/tidesdb-python"
-Documentation = "https://github.com/tidesdb/tidesdb"
+Homepage = "https://tidesdb.com"
+Documentation = "https://tidesdb.com/reference/python/"
 Repository = "https://github.com/tidesdb/tidesdb-python"
 "Bug Tracker" = "https://github.com/tidesdb/tidesdb-python/issues"
 Discord = "https://discord.gg/tWEmjR66cy"
@@ -52,18 +53,24 @@ dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "black>=23.0.0",
-    "flake8>=6.0.0",
+    "ruff>=0.1.0",
     "mypy>=1.0.0",
 ]
 
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.black]
 line-length = 100
-target-version = ['py37', 'py38', 'py39', 'py310', 'py311', 'py312', 'py313']
+target-version = ['py310', 'py311', 'py312', 'py313']
 include = '\.pyi?$'
 
-[tool.isort]
-profile = "black"
-line_length = 100
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -73,7 +80,7 @@ python_functions = "test_*"
 addopts = "-v --cov=tidesdb --cov-report=html --cov-report=term"
 
 [tool.mypy]
-python_version = "3.7"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
