@@ -742,7 +742,10 @@ class Transaction:
 
         value = ctypes.string_at(value_ptr, value_size.value)
 
-        libc = ctypes.CDLL(None)
+        if sys.platform == "win32":
+            libc = ctypes.CDLL("msvcrt")
+        else:
+            libc = ctypes.CDLL(None)
         libc.free(ctypes.cast(value_ptr, c_void_p))
 
         return value
