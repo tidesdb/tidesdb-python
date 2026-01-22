@@ -1,6 +1,8 @@
-# TidesDB Python
+# tidesdb-python
 
-Official Python package for [TidesDB](https://tidesdb.com).
+tidesdb-python is the official Python binding for TidesDB.
+
+TidesDB is a fast and efficient key-value storage engine library written in C. The underlying data structure is based on a log-structured merge-tree (LSM-tree). This Python binding provides a safe, idiomatic Python interface to TidesDB with full support for all features.
 
 ## Features
 
