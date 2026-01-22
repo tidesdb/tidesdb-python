@@ -148,6 +148,7 @@ jobs:
             -DCMAKE_PREFIX_PATH=/mingw64 \
             -DTIDESDB_WITH_SANITIZER=OFF \
             -DTIDESDB_BUILD_TESTS=OFF \
+            -DBUILD_SHARED_LIBS=ON \
             -S . -B build
           cmake --build build --config Release
           cmake --install build --prefix /mingw64
@@ -175,8 +176,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: |
-          export PATH="/mingw64/bin:$PATH"
-          export LD_LIBRARY_PATH="/mingw64/lib:$LD_LIBRARY_PATH"
+          export PATH="/mingw64/bin:/mingw64/lib:$PATH"
           cd tidesdb-python
           python -m venv venv
           source venv/bin/activate
