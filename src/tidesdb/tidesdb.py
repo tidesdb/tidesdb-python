@@ -176,7 +176,7 @@ class _CColumnFamilyConfig(Structure):
         ("min_levels", c_int),
         ("dividing_level_offset", c_int),
         ("klog_value_threshold", c_size_t),
-        ("compression_algo", c_int),
+        ("compression_algorithm", c_int),
         ("enable_bloom_filter", c_int),
         ("bloom_fpr", c_double),
         ("enable_block_indexes", c_int),
@@ -356,6 +356,31 @@ _lib.tidesdb_free_stats.restype = None
 _lib.tidesdb_get_cache_stats.argtypes = [c_void_p, POINTER(_CCacheStats)]
 _lib.tidesdb_get_cache_stats.restype = c_int
 
+_lib.tidesdb_backup.argtypes = [c_void_p, c_char_p]
+_lib.tidesdb_backup.restype = c_int
+
+_lib.tidesdb_rename_column_family.argtypes = [c_void_p, c_char_p, c_char_p]
+_lib.tidesdb_rename_column_family.restype = c_int
+
+_lib.tidesdb_cf_update_runtime_config.argtypes = [c_void_p, POINTER(_CColumnFamilyConfig), c_int]
+_lib.tidesdb_cf_update_runtime_config.restype = c_int
+
+_lib.tidesdb_cf_config_save_to_ini.argtypes = [c_char_p, c_char_p, POINTER(_CColumnFamilyConfig)]
+_lib.tidesdb_cf_config_save_to_ini.restype = c_int
+
+_lib.tidesdb_is_flushing.argtypes = [c_void_p]
+_lib.tidesdb_is_flushing.restype = c_int
+
+_lib.tidesdb_is_compacting.argtypes = [c_void_p]
+_lib.tidesdb_is_compacting.restype = c_int
+
+# Comparator function type: int (*)(const uint8_t*, size_t, const uint8_t*, size_t, void*)
+COMPARATOR_FUNC = ctypes.CFUNCTYPE(c_int, POINTER(c_uint8), c_size_t, POINTER(c_uint8), c_size_t, c_void_p)
+DESTROY_FUNC = ctypes.CFUNCTYPE(None, c_void_p)
+
+_lib.tidesdb_register_comparator.argtypes = [c_void_p, c_char_p, COMPARATOR_FUNC, c_void_p, DESTROY_FUNC]
+_lib.tidesdb_register_comparator.restype = c_int
+
 
 @dataclass
 class Config:
@@ -402,7 +427,7 @@ class ColumnFamilyConfig:
         c_config.min_levels = self.min_levels
         c_config.dividing_level_offset = self.dividing_level_offset
         c_config.klog_value_threshold = self.klog_value_threshold
-        c_config.compression_algo = int(self.compression_algorithm)
+        c_config.compression_algorithm = int(self.compression_algorithm)
         c_config.enable_bloom_filter = 1 if self.enable_bloom_filter else 0
         c_config.bloom_fpr = self.bloom_fpr
         c_config.enable_block_indexes = 1 if self.enable_block_indexes else 0
@@ -462,7 +487,7 @@ def default_column_family_config() -> ColumnFamilyConfig:
         min_levels=c_config.min_levels,
         dividing_level_offset=c_config.dividing_level_offset,
         klog_value_threshold=c_config.klog_value_threshold,
-        compression_algorithm=CompressionAlgorithm(c_config.compression_algo),
+        compression_algorithm=CompressionAlgorithm(c_config.compression_algorithm),
         enable_bloom_filter=bool(c_config.enable_bloom_filter),
         bloom_fpr=c_config.bloom_fpr,
         enable_block_indexes=bool(c_config.enable_block_indexes),
@@ -478,6 +503,23 @@ def default_column_family_config() -> ColumnFamilyConfig:
         l1_file_count_trigger=c_config.l1_file_count_trigger,
         l0_queue_stall_threshold=c_config.l0_queue_stall_threshold,
     )
+
+
+def save_config_to_ini(file_path: str, cf_name: str, config: ColumnFamilyConfig) -> None:
+    """
+    Save column family configuration to a custom INI file.
+
+    Args:
+        file_path: Path to the INI file to create/overwrite
+        cf_name: Name of the column family (used as section name)
+        config: Configuration to save
+    """
+    c_config = config._to_c_struct()
+    result = _lib.tidesdb_cf_config_save_to_ini(
+        file_path.encode("utf-8"), cf_name.encode("utf-8"), ctypes.byref(c_config)
+    )
+    if result != TDB_SUCCESS:
+        raise TidesDBError.from_code(result, "failed to save config to INI file")
 
 
 class Iterator:
@@ -620,6 +662,38 @@ class ColumnFamily:
         if result != TDB_SUCCESS:
             raise TidesDBError.from_code(result, "failed to flush memtable")
 
+    def is_flushing(self) -> bool:
+        """Check if a flush operation is in progress for this column family."""
+        return bool(_lib.tidesdb_is_flushing(self._cf))
+
+    def is_compacting(self) -> bool:
+        """Check if a compaction operation is in progress for this column family."""
+        return bool(_lib.tidesdb_is_compacting(self._cf))
+
+    def update_runtime_config(self, config: ColumnFamilyConfig, persist_to_disk: bool = True) -> None:
+        """
+        Update runtime-safe configuration settings for this column family.
+
+        Updatable settings (safe to change at runtime):
+        - write_buffer_size: Memtable flush threshold
+        - skip_list_max_level: Skip list level for new memtables
+        - skip_list_probability: Skip list probability for new memtables
+        - bloom_fpr: False positive rate for new SSTables
+        - index_sample_ratio: Index sampling ratio for new SSTables
+        - sync_mode: Durability mode
+        - sync_interval_us: Sync interval in microseconds
+
+        Args:
+            config: New configuration settings
+            persist_to_disk: If True, save changes to config.ini
+        """
+        c_config = config._to_c_struct()
+        result = _lib.tidesdb_cf_update_runtime_config(
+            self._cf, ctypes.byref(c_config), 1 if persist_to_disk else 0
+        )
+        if result != TDB_SUCCESS:
+            raise TidesDBError.from_code(result, "failed to update runtime config")
+
     def get_stats(self) -> Stats:
         """Get statistics for this column family."""
         stats_ptr = POINTER(_CStats)()
@@ -649,7 +723,7 @@ class ColumnFamily:
                 min_levels=c_cfg.min_levels,
                 dividing_level_offset=c_cfg.dividing_level_offset,
                 klog_value_threshold=c_cfg.klog_value_threshold,
-                compression_algorithm=CompressionAlgorithm(c_cfg.compression_algo),
+                compression_algorithm=CompressionAlgorithm(c_cfg.compression_algorithm),
                 enable_bloom_filter=bool(c_cfg.enable_bloom_filter),
                 bloom_fpr=c_cfg.bloom_fpr,
                 enable_block_indexes=bool(c_cfg.enable_block_indexes),
@@ -1125,6 +1199,97 @@ class TidesDB:
             hit_rate=c_stats.hit_rate,
             num_partitions=c_stats.num_partitions,
         )
+
+    def backup(self, backup_dir: str) -> None:
+        """
+        Create an on-disk snapshot of the database without blocking normal reads/writes.
+
+        Args:
+            backup_dir: Path to the backup directory (must be non-existent or empty)
+
+        Raises:
+            TidesDBError: If backup fails (e.g., directory not empty, I/O error)
+        """
+        if self._closed:
+            raise TidesDBError("Database is closed")
+
+        result = _lib.tidesdb_backup(self._db, backup_dir.encode("utf-8"))
+        if result != TDB_SUCCESS:
+            raise TidesDBError.from_code(result, "failed to create backup")
+
+    def rename_column_family(self, old_name: str, new_name: str) -> None:
+        """
+        Atomically rename a column family and its underlying directory.
+
+        The operation waits for any in-progress flush or compaction to complete
+        before renaming.
+
+        Args:
+            old_name: Current name of the column family
+            new_name: New name for the column family
+
+        Raises:
+            TidesDBError: If rename fails (e.g., old_name not found, new_name exists)
+        """
+        if self._closed:
+            raise TidesDBError("Database is closed")
+
+        result = _lib.tidesdb_rename_column_family(
+            self._db, old_name.encode("utf-8"), new_name.encode("utf-8")
+        )
+        if result != TDB_SUCCESS:
+            raise TidesDBError.from_code(result, "failed to rename column family")
+
+    def register_comparator(
+        self,
+        name: str,
+        comparator_fn: callable,
+        ctx: object = None,
+    ) -> None:
+        """
+        Register a custom comparator for use with column families.
+
+        The comparator function determines the sort order of keys throughout the
+        entire system: memtables, SSTables, block indexes, and iterators.
+
+        Built-in comparators (automatically registered):
+        - "memcmp": Binary byte-by-byte comparison (default)
+        - "lexicographic": Null-terminated string comparison
+        - "uint64": Unsigned 64-bit integer comparison
+        - "int64": Signed 64-bit integer comparison
+        - "reverse": Reverse binary comparison
+        - "case_insensitive": Case-insensitive ASCII comparison
+
+        Args:
+            name: Name of the comparator (used in ColumnFamilyConfig.comparator_name)
+            comparator_fn: Function with signature (key1: bytes, key2: bytes) -> int
+                          Returns < 0 if key1 < key2, 0 if equal, > 0 if key1 > key2
+            ctx: Optional context object (not currently used, reserved for future)
+
+        Note:
+            Comparators must be registered BEFORE creating column families that use them.
+            Once set, a comparator cannot be changed for a column family.
+        """
+        if self._closed:
+            raise TidesDBError("Database is closed")
+
+        # Wrap Python function in C-compatible callback
+        def c_comparator(key1_ptr, key1_size, key2_ptr, key2_size, ctx_ptr):
+            key1 = ctypes.string_at(key1_ptr, key1_size) if key1_ptr and key1_size > 0 else b""
+            key2 = ctypes.string_at(key2_ptr, key2_size) if key2_ptr and key2_size > 0 else b""
+            return comparator_fn(key1, key2)
+
+        # Create C function pointer and store reference to prevent garbage collection
+        c_func = COMPARATOR_FUNC(c_comparator)
+        if not hasattr(self, "_comparator_refs"):
+            self._comparator_refs = []
+        self._comparator_refs.append(c_func)
+
+        result = _lib.tidesdb_register_comparator(
+            self._db, name.encode("utf-8"), c_func, None, None
+        )
+        if result != TDB_SUCCESS:
+            raise TidesDBError.from_code(result, "failed to register comparator")
 
     def __enter__(self) -> TidesDB:
         return self
