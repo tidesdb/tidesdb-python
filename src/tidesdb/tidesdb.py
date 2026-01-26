@@ -219,6 +219,13 @@ class _CStats(Structure):
         ("level_sizes", POINTER(c_size_t)),
         ("level_num_sstables", POINTER(c_int)),
         ("config", POINTER(_CColumnFamilyConfig)),
+        ("total_keys", c_uint64),
+        ("total_data_size", c_uint64),
+        ("avg_key_size", c_double),
+        ("avg_value_size", c_double),
+        ("level_key_counts", POINTER(c_uint64)),
+        ("read_amp", c_double),
+        ("hit_rate", c_double),
     ]
 
 
@@ -457,6 +464,13 @@ class Stats:
     memtable_size: int
     level_sizes: list[int]
     level_num_sstables: list[int]
+    total_keys: int
+    total_data_size: int
+    avg_key_size: float
+    avg_value_size: float
+    level_key_counts: list[int]
+    read_amp: float
+    hit_rate: float
     config: ColumnFamilyConfig | None = None
 
 
@@ -705,6 +719,7 @@ class ColumnFamily:
 
         level_sizes = []
         level_num_sstables = []
+        level_key_counts = []
 
         if c_stats.num_levels > 0:
             if c_stats.level_sizes:
@@ -713,6 +728,9 @@ class ColumnFamily:
             if c_stats.level_num_sstables:
                 for i in range(c_stats.num_levels):
                     level_num_sstables.append(c_stats.level_num_sstables[i])
+            if c_stats.level_key_counts:
+                for i in range(c_stats.num_levels):
+                    level_key_counts.append(c_stats.level_key_counts[i])
 
         config = None
         if c_stats.config:
@@ -745,6 +763,13 @@ class ColumnFamily:
             memtable_size=c_stats.memtable_size,
             level_sizes=level_sizes,
             level_num_sstables=level_num_sstables,
+            total_keys=c_stats.total_keys,
+            total_data_size=c_stats.total_data_size,
+            avg_key_size=c_stats.avg_key_size,
+            avg_value_size=c_stats.avg_value_size,
+            level_key_counts=level_key_counts,
+            read_amp=c_stats.read_amp,
+            hit_rate=c_stats.hit_rate,
             config=config,
         )
 
