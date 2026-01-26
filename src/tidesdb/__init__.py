@@ -23,6 +23,8 @@ from .tidesdb import (
     TidesDBError,
     default_config,
     default_column_family_config,
+    save_config_to_ini,
+    COMPARATOR_FUNC,
 )
 
 __version__ = "7.3.1"
@@ -42,4 +44,6 @@ __all__ = [
     "TidesDBError",
     "default_config",
     "default_column_family_config",
+    "save_config_to_ini",
+    "COMPARATOR_FUNC",
 ]
