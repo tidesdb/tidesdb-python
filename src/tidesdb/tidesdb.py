@@ -207,6 +207,8 @@ class _CConfig(Structure):
         ("log_level", c_int),
         ("block_cache_size", c_size_t),
         ("max_open_sstables", c_size_t),
+        ("log_to_file", c_int),
+        ("log_truncation_at", c_size_t),
     ]
 
 
@@ -399,6 +401,8 @@ class Config:
     log_level: LogLevel = LogLevel.LOG_INFO
     block_cache_size: int = 64 * 1024 * 1024
     max_open_sstables: int = 256
+    log_to_file: bool = False
+    log_truncation_at: int = 24 * 1024 * 1024
 
 
 @dataclass
@@ -995,6 +999,8 @@ class TidesDB:
             log_level=int(config.log_level),
             block_cache_size=config.block_cache_size,
             max_open_sstables=config.max_open_sstables,
+            log_to_file=1 if config.log_to_file else 0,
+            log_truncation_at=config.log_truncation_at,
         )
 
         db_ptr = c_void_p()
@@ -1014,6 +1020,8 @@ class TidesDB:
         log_level: LogLevel = LogLevel.LOG_INFO,
         block_cache_size: int = 64 * 1024 * 1024,
         max_open_sstables: int = 256,
+        log_to_file: bool = False,
+        log_truncation_at: int = 24 * 1024 * 1024,
     ) -> TidesDB:
         """
         Convenience method to open a database with individual parameters.
@@ -1025,6 +1033,8 @@ class TidesDB:
             log_level: Logging level
             block_cache_size: Size of block cache in bytes
             max_open_sstables: Maximum number of open SSTables
+            log_to_file: Write logs to file instead of stderr
+            log_truncation_at: Log file truncation size in bytes (0 = no truncation)
 
         Returns:
             TidesDB instance
@@ -1036,6 +1046,8 @@ class TidesDB:
             log_level=log_level,
             block_cache_size=block_cache_size,
             max_open_sstables=max_open_sstables,
+            log_to_file=log_to_file,
+            log_truncation_at=log_truncation_at,
         )
         return cls(config)
 
