@@ -32,6 +32,7 @@ from ctypes import (
     c_int,
     c_size_t,
     c_uint8,
+    c_uint32,
     c_uint64,
     c_void_p,
 )
@@ -194,6 +195,7 @@ class _CColumnFamilyConfig(Structure):
         ("min_disk_space", c_uint64),
         ("l1_file_count_trigger", c_int),
         ("l0_queue_stall_threshold", c_int),
+        ("use_btree", c_int),
     ]
 
 
@@ -228,6 +230,10 @@ class _CStats(Structure):
         ("level_key_counts", POINTER(c_uint64)),
         ("read_amp", c_double),
         ("hit_rate", c_double),
+        ("use_btree", c_int),
+        ("btree_total_nodes", c_uint64),
+        ("btree_max_height", c_uint32),
+        ("btree_avg_height", c_double),
     ]
 
 
@@ -429,6 +435,7 @@ class ColumnFamilyConfig:
     min_disk_space: int = 100 * 1024 * 1024
     l1_file_count_trigger: int = 4
     l0_queue_stall_threshold: int = 20
+    use_btree: bool = False
 
     def _to_c_struct(self) -> _CColumnFamilyConfig:
         """Convert to C structure."""
@@ -452,6 +459,7 @@ class ColumnFamilyConfig:
         c_config.min_disk_space = self.min_disk_space
         c_config.l1_file_count_trigger = self.l1_file_count_trigger
         c_config.l0_queue_stall_threshold = self.l0_queue_stall_threshold
+        c_config.use_btree = 1 if self.use_btree else 0
 
         name_bytes = self.comparator_name.encode("utf-8")[:TDB_MAX_COMPARATOR_NAME - 1]
         name_bytes = name_bytes + b"\x00" * (TDB_MAX_COMPARATOR_NAME - len(name_bytes))
@@ -475,6 +483,10 @@ class Stats:
     level_key_counts: list[int]
     read_amp: float
     hit_rate: float
+    use_btree: bool = False
+    btree_total_nodes: int = 0
+    btree_max_height: int = 0
+    btree_avg_height: float = 0.0
     config: ColumnFamilyConfig | None = None
 
 
@@ -520,6 +532,7 @@ def default_column_family_config() -> ColumnFamilyConfig:
         min_disk_space=c_config.min_disk_space,
         l1_file_count_trigger=c_config.l1_file_count_trigger,
         l0_queue_stall_threshold=c_config.l0_queue_stall_threshold,
+        use_btree=bool(c_config.use_btree),
     )
 
 
@@ -760,6 +773,7 @@ class ColumnFamily:
                 min_disk_space=c_cfg.min_disk_space,
                 l1_file_count_trigger=c_cfg.l1_file_count_trigger,
                 l0_queue_stall_threshold=c_cfg.l0_queue_stall_threshold,
+                use_btree=bool(c_cfg.use_btree),
             )
 
         stats = Stats(
@@ -774,6 +788,10 @@ class ColumnFamily:
             level_key_counts=level_key_counts,
             read_amp=c_stats.read_amp,
             hit_rate=c_stats.hit_rate,
+            use_btree=bool(c_stats.use_btree),
+            btree_total_nodes=c_stats.btree_total_nodes,
+            btree_max_height=c_stats.btree_max_height,
+            btree_avg_height=c_stats.btree_avg_height,
             config=config,
         )
 

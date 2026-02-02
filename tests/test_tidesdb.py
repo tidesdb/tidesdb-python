@@ -100,6 +100,27 @@ class TestColumnFamilies:
 
         db.drop_column_family("custom_cf")
 
+    def test_create_with_btree_config(self, db):
+        """Test creating column family with B+tree format enabled."""
+        config = tidesdb.default_column_family_config()
+        config.use_btree = True
+
+        db.create_column_family("btree_cf", config)
+        cf = db.get_column_family("btree_cf")
+        assert cf is not None
+
+        stats = cf.get_stats()
+        assert stats.config is not None
+        assert stats.config.use_btree is True
+        assert stats.use_btree is True
+
+        db.drop_column_family("btree_cf")
+
+    def test_default_config_use_btree(self, db):
+        """Test that default config has use_btree=False."""
+        config = tidesdb.default_column_family_config()
+        assert config.use_btree is False
+
     def test_list_column_families(self, db):
         """Test listing column families."""
         db.create_column_family("cf1")
@@ -311,6 +332,22 @@ class TestStats:
         stats = cf.get_stats()
         assert stats.num_levels >= 0
         assert stats.memtable_size >= 0
+
+    def test_column_family_stats_btree_fields(self, db, cf):
+        """Test that B+tree stats fields are present."""
+        with db.begin_txn() as txn:
+            txn.put(cf, b"key1", b"value1")
+            txn.commit()
+
+        stats = cf.get_stats()
+        # B+tree stats should be present (even if 0 for non-btree CF)
+        assert isinstance(stats.use_btree, bool)
+        assert isinstance(stats.btree_total_nodes, int)
+        assert isinstance(stats.btree_max_height, int)
+        assert isinstance(stats.btree_avg_height, float)
+        assert stats.btree_total_nodes >= 0
+        assert stats.btree_max_height >= 0
+        assert stats.btree_avg_height >= 0.0
 
     def test_cache_stats(self, db):
         """Test getting cache statistics."""
