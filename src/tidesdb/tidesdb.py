@@ -377,6 +377,12 @@ _lib.tidesdb_backup.restype = c_int
 _lib.tidesdb_rename_column_family.argtypes = [c_void_p, c_char_p, c_char_p]
 _lib.tidesdb_rename_column_family.restype = c_int
 
+_lib.tidesdb_clone_column_family.argtypes = [c_void_p, c_char_p, c_char_p]
+_lib.tidesdb_clone_column_family.restype = c_int
+
+_lib.tidesdb_txn_reset.argtypes = [c_void_p, c_int]
+_lib.tidesdb_txn_reset.restype = c_int
+
 _lib.tidesdb_cf_update_runtime_config.argtypes = [c_void_p, POINTER(_CColumnFamilyConfig), c_int]
 _lib.tidesdb_cf_update_runtime_config.restype = c_int
 
@@ -915,6 +921,28 @@ class Transaction:
         if result != TDB_SUCCESS:
             raise TidesDBError.from_code(result, "failed to rollback transaction")
 
+    def reset(self, isolation: IsolationLevel = IsolationLevel.READ_COMMITTED) -> None:
+        """
+        Reset a committed or aborted transaction for reuse with a new isolation level.
+
+        This avoids the overhead of freeing and reallocating transaction resources
+        in hot loops. The transaction must be committed or rolled back before reset.
+
+        Args:
+            isolation: New isolation level for the reset transaction
+
+        Raises:
+            TidesDBError: If transaction is still active (not committed/aborted)
+        """
+        if self._closed:
+            raise TidesDBError("Transaction is closed")
+
+        result = _lib.tidesdb_txn_reset(self._txn, int(isolation))
+        if result != TDB_SUCCESS:
+            raise TidesDBError.from_code(result, "failed to reset transaction")
+
+        self._committed = False
+
     def savepoint(self, name: str) -> None:
         """Create a savepoint within the transaction."""
         if self._closed:
@@ -1294,6 +1322,30 @@ class TidesDB:
         )
         if result != TDB_SUCCESS:
             raise TidesDBError.from_code(result, "failed to rename column family")
+
+    def clone_column_family(self, source_name: str, dest_name: str) -> None:
+        """
+        Create a complete copy of an existing column family with a new name.
+
+        The clone contains all the data from the source at the time of cloning.
+        The clone is completely independent - modifications to one do not affect
+        the other.
+
+        Args:
+            source_name: Name of the source column family to clone
+            dest_name: Name for the new cloned column family
+
+        Raises:
+            TidesDBError: If clone fails (e.g., source not found, dest exists)
+        """
+        if self._closed:
+            raise TidesDBError("Database is closed")
+
+        result = _lib.tidesdb_clone_column_family(
+            self._db, source_name.encode("utf-8"), dest_name.encode("utf-8")
+        )
+        if result != TDB_SUCCESS:
+            raise TidesDBError.from_code(result, "failed to clone column family")
 
     def register_comparator(
         self,

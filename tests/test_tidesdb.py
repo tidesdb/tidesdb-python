@@ -320,6 +320,150 @@ class TestTTL:
             assert value == b"value"
 
 
+class TestCloneColumnFamily:
+    """Tests for column family clone operations."""
+
+    def test_clone_column_family(self, db, cf):
+        """Test cloning a column family with data."""
+        with db.begin_txn() as txn:
+            txn.put(cf, b"key1", b"value1")
+            txn.put(cf, b"key2", b"value2")
+            txn.commit()
+
+        db.clone_column_family("test_cf", "cloned_cf")
+
+        cloned = db.get_column_family("cloned_cf")
+        assert cloned is not None
+        assert cloned.name == "cloned_cf"
+
+        with db.begin_txn() as txn:
+            assert txn.get(cloned, b"key1") == b"value1"
+            assert txn.get(cloned, b"key2") == b"value2"
+
+        db.drop_column_family("cloned_cf")
+
+    def test_clone_independence(self, db, cf):
+        """Test that clone is independent from source."""
+        with db.begin_txn() as txn:
+            txn.put(cf, b"key1", b"original")
+            txn.commit()
+
+        db.clone_column_family("test_cf", "cloned_cf")
+        cloned = db.get_column_family("cloned_cf")
+
+        with db.begin_txn() as txn:
+            txn.put(cf, b"key1", b"modified")
+            txn.commit()
+
+        with db.begin_txn() as txn:
+            assert txn.get(cloned, b"key1") == b"original"
+            assert txn.get(cf, b"key1") == b"modified"
+
+        db.drop_column_family("cloned_cf")
+
+    def test_clone_nonexistent_source(self, db):
+        """Test cloning a non-existent column family raises error."""
+        with pytest.raises(tidesdb.TidesDBError):
+            db.clone_column_family("nonexistent", "cloned_cf")
+
+    def test_clone_to_existing_name(self, db, cf):
+        """Test cloning to an already existing name raises error."""
+        db.create_column_family("existing_cf")
+        with pytest.raises(tidesdb.TidesDBError):
+            db.clone_column_family("test_cf", "existing_cf")
+        db.drop_column_family("existing_cf")
+
+    def test_clone_listed(self, db, cf):
+        """Test that cloned column family appears in list."""
+        db.clone_column_family("test_cf", "cloned_cf")
+
+        names = db.list_column_families()
+        assert "test_cf" in names
+        assert "cloned_cf" in names
+
+        db.drop_column_family("cloned_cf")
+
+
+class TestTransactionReset:
+    """Tests for transaction reset operations."""
+
+    def test_reset_after_commit(self, db, cf):
+        """Test resetting a transaction after commit."""
+        txn = db.begin_txn()
+        txn.put(cf, b"key1", b"value1")
+        txn.commit()
+
+        txn.reset(tidesdb.IsolationLevel.READ_COMMITTED)
+
+        txn.put(cf, b"key2", b"value2")
+        txn.commit()
+        txn.close()
+
+        with db.begin_txn() as txn:
+            assert txn.get(cf, b"key1") == b"value1"
+            assert txn.get(cf, b"key2") == b"value2"
+
+    def test_reset_after_rollback(self, db, cf):
+        """Test resetting a transaction after rollback."""
+        txn = db.begin_txn()
+        txn.put(cf, b"key1", b"value1")
+        txn.rollback()
+
+        txn.reset(tidesdb.IsolationLevel.READ_COMMITTED)
+
+        txn.put(cf, b"key2", b"value2")
+        txn.commit()
+        txn.close()
+
+        with db.begin_txn() as txn:
+            with pytest.raises(tidesdb.TidesDBError):
+                txn.get(cf, b"key1")
+            assert txn.get(cf, b"key2") == b"value2"
+
+    def test_reset_with_different_isolation(self, db, cf):
+        """Test resetting with a different isolation level."""
+        txn = db.begin_txn()
+        txn.put(cf, b"key1", b"value1")
+        txn.commit()
+
+        txn.reset(tidesdb.IsolationLevel.SERIALIZABLE)
+
+        txn.put(cf, b"key2", b"value2")
+        txn.commit()
+        txn.close()
+
+        with db.begin_txn() as txn:
+            assert txn.get(cf, b"key1") == b"value1"
+            assert txn.get(cf, b"key2") == b"value2"
+
+    def test_reset_reuse_loop(self, db, cf):
+        """Test resetting in a loop for batch processing."""
+        txn = db.begin_txn()
+
+        for i in range(5):
+            txn.put(cf, f"batch_key_{i}".encode(), f"batch_value_{i}".encode())
+            txn.commit()
+            if i < 4:
+                txn.reset(tidesdb.IsolationLevel.READ_COMMITTED)
+
+        txn.close()
+
+        with db.begin_txn() as txn:
+            for i in range(5):
+                value = txn.get(cf, f"batch_key_{i}".encode())
+                assert value == f"batch_value_{i}".encode()
+
+    def test_reset_closed_transaction_raises(self, db, cf):
+        """Test that resetting a closed transaction raises error."""
+        txn = db.begin_txn()
+        txn.put(cf, b"key1", b"value1")
+        txn.commit()
+        txn.close()
+
+        with pytest.raises(tidesdb.TidesDBError):
+            txn.reset(tidesdb.IsolationLevel.READ_COMMITTED)
+
+
 class TestStats:
     """Tests for statistics operations."""
 
