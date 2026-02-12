@@ -374,6 +374,9 @@ _lib.tidesdb_get_cache_stats.restype = c_int
 _lib.tidesdb_backup.argtypes = [c_void_p, c_char_p]
 _lib.tidesdb_backup.restype = c_int
 
+_lib.tidesdb_checkpoint.argtypes = [c_void_p, c_char_p]
+_lib.tidesdb_checkpoint.restype = c_int
+
 _lib.tidesdb_rename_column_family.argtypes = [c_void_p, c_char_p, c_char_p]
 _lib.tidesdb_rename_column_family.restype = c_int
 
@@ -1299,6 +1302,27 @@ class TidesDB:
         result = _lib.tidesdb_backup(self._db, backup_dir.encode("utf-8"))
         if result != TDB_SUCCESS:
             raise TidesDBError.from_code(result, "failed to create backup")
+
+    def checkpoint(self, checkpoint_dir: str) -> None:
+        """
+        Create a lightweight, near-instant snapshot of the database using hard links.
+
+        Unlike backup(), checkpoint uses hard links instead of copying SSTable data,
+        making it near-instant and using no extra disk space until compaction removes
+        old SSTables.
+
+        Args:
+            checkpoint_dir: Path to the checkpoint directory (must be non-existent or empty)
+
+        Raises:
+            TidesDBError: If checkpoint fails (e.g., directory not empty, I/O error)
+        """
+        if self._closed:
+            raise TidesDBError("Database is closed")
+
+        result = _lib.tidesdb_checkpoint(self._db, checkpoint_dir.encode("utf-8"))
+        if result != TDB_SUCCESS:
+            raise TidesDBError.from_code(result, "failed to create checkpoint")
 
     def rename_column_family(self, old_name: str, new_name: str) -> None:
         """

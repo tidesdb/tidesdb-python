@@ -529,5 +529,65 @@ class TestMaintenance:
         time.sleep(0.5)
 
 
+class TestCheckpoint:
+    """Tests for checkpoint operations."""
+
+    def test_checkpoint_creates_snapshot(self, db, cf, temp_db_path):
+        """Test that checkpoint creates a usable snapshot."""
+        with db.begin_txn() as txn:
+            txn.put(cf, b"key1", b"value1")
+            txn.put(cf, b"key2", b"value2")
+            txn.commit()
+
+        checkpoint_dir = temp_db_path + "_checkpoint"
+        try:
+            db.checkpoint(checkpoint_dir)
+            assert os.path.isdir(checkpoint_dir)
+
+            with tidesdb.TidesDB.open(checkpoint_dir) as checkpoint_db:
+                cp_cf = checkpoint_db.get_column_family("test_cf")
+                with checkpoint_db.begin_txn() as txn:
+                    assert txn.get(cp_cf, b"key1") == b"value1"
+                    assert txn.get(cp_cf, b"key2") == b"value2"
+        finally:
+            shutil.rmtree(checkpoint_dir, ignore_errors=True)
+
+    def test_checkpoint_existing_dir_raises(self, db, cf, temp_db_path):
+        """Test that checkpoint to a non-empty directory raises error."""
+        with db.begin_txn() as txn:
+            txn.put(cf, b"key1", b"value1")
+            txn.commit()
+
+        checkpoint_dir = temp_db_path + "_checkpoint"
+        try:
+            db.checkpoint(checkpoint_dir)
+
+            with pytest.raises(tidesdb.TidesDBError):
+                db.checkpoint(checkpoint_dir)
+        finally:
+            shutil.rmtree(checkpoint_dir, ignore_errors=True)
+
+    def test_checkpoint_independence(self, db, cf, temp_db_path):
+        """Test that checkpoint is independent from the live database."""
+        with db.begin_txn() as txn:
+            txn.put(cf, b"key1", b"original")
+            txn.commit()
+
+        checkpoint_dir = temp_db_path + "_checkpoint"
+        try:
+            db.checkpoint(checkpoint_dir)
+
+            with db.begin_txn() as txn:
+                txn.put(cf, b"key1", b"modified")
+                txn.commit()
+
+            with tidesdb.TidesDB.open(checkpoint_dir) as checkpoint_db:
+                cp_cf = checkpoint_db.get_column_family("test_cf")
+                with checkpoint_db.begin_txn() as txn:
+                    assert txn.get(cp_cf, b"key1") == b"original"
+        finally:
+            shutil.rmtree(checkpoint_dir, ignore_errors=True)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
