@@ -27,7 +27,7 @@ from .tidesdb import (
     COMPARATOR_FUNC,
 )
 
-__version__ = "7.3.1"
+__version__ = "0.9.1"
 __all__ = [
     "TidesDB",
     "Transaction",
