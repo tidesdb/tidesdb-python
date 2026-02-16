@@ -79,6 +79,7 @@ _lib = _load_library()
 
 TDB_MAX_COMPARATOR_NAME = 64
 TDB_MAX_COMPARATOR_CTX = 256
+TDB_MAX_CF_NAME_LEN = 128
 
 TDB_SUCCESS = 0
 TDB_ERR_MEMORY = -1
@@ -172,6 +173,7 @@ class _CColumnFamilyConfig(Structure):
     """C structure for tidesdb_column_family_config_t."""
 
     _fields_ = [
+        ("name", c_char * TDB_MAX_CF_NAME_LEN),
         ("write_buffer_size", c_size_t),
         ("level_size_ratio", c_size_t),
         ("min_levels", c_int),
@@ -446,9 +448,15 @@ class ColumnFamilyConfig:
     l0_queue_stall_threshold: int = 20
     use_btree: bool = False
 
-    def _to_c_struct(self) -> _CColumnFamilyConfig:
+    def _to_c_struct(self, name: str = "") -> _CColumnFamilyConfig:
         """Convert to C structure."""
         c_config = _CColumnFamilyConfig()
+
+        # Set the name field
+        cf_name_bytes = name.encode("utf-8")[:TDB_MAX_CF_NAME_LEN - 1]
+        cf_name_bytes = cf_name_bytes + b"\x00" * (TDB_MAX_CF_NAME_LEN - len(cf_name_bytes))
+        c_config.name = cf_name_bytes
+
         c_config.write_buffer_size = self.write_buffer_size
         c_config.level_size_ratio = self.level_size_ratio
         c_config.min_levels = self.min_levels
@@ -554,7 +562,7 @@ def save_config_to_ini(file_path: str, cf_name: str, config: ColumnFamilyConfig)
         cf_name: Name of the column family (used as section name)
         config: Configuration to save
     """
-    c_config = config._to_c_struct()
+    c_config = config._to_c_struct(cf_name)
     result = _lib.tidesdb_cf_config_save_to_ini(
         file_path.encode("utf-8"), cf_name.encode("utf-8"), ctypes.byref(c_config)
     )
@@ -727,7 +735,7 @@ class ColumnFamily:
             config: New configuration settings
             persist_to_disk: If True, save changes to config.ini
         """
-        c_config = config._to_c_struct()
+        c_config = config._to_c_struct(self.name)
         result = _lib.tidesdb_cf_update_runtime_config(
             self._cf, ctypes.byref(c_config), 1 if persist_to_disk else 0
         )
@@ -1128,7 +1136,7 @@ class TidesDB:
         if config is None:
             config = default_column_family_config()
 
-        c_config = config._to_c_struct()
+        c_config = config._to_c_struct(name)
 
         result = _lib.tidesdb_create_column_family(
             self._db, name.encode("utf-8"), ctypes.byref(c_config)
