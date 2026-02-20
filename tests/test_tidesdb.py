@@ -589,5 +589,127 @@ class TestCheckpoint:
             shutil.rmtree(checkpoint_dir, ignore_errors=True)
 
 
+class TestRangeCost:
+    """Tests for range cost estimation."""
+
+    def test_range_cost_returns_float(self, db, cf):
+        """Test that range_cost returns a float value."""
+        with db.begin_txn() as txn:
+            txn.put(cf, b"key_a", b"value_a")
+            txn.put(cf, b"key_z", b"value_z")
+            txn.commit()
+
+        cost = cf.range_cost(b"key_a", b"key_z")
+        assert isinstance(cost, float)
+        assert cost >= 0.0
+
+    def test_range_cost_empty_cf(self, db, cf):
+        """Test range_cost on an empty column family."""
+        cost = cf.range_cost(b"a", b"z")
+        assert isinstance(cost, float)
+        assert cost >= 0.0
+
+    def test_range_cost_key_order_irrelevant(self, db, cf):
+        """Test that key order does not matter."""
+        with db.begin_txn() as txn:
+            txn.put(cf, b"aaa", b"1")
+            txn.put(cf, b"zzz", b"2")
+            txn.commit()
+
+        cost_ab = cf.range_cost(b"aaa", b"zzz")
+        cost_ba = cf.range_cost(b"zzz", b"aaa")
+        assert cost_ab == cost_ba
+
+    def test_range_cost_narrow_vs_wide(self, db, cf):
+        """Test that a wider range costs at least as much as a narrow one."""
+        with db.begin_txn() as txn:
+            for i in range(50):
+                txn.put(cf, f"key:{i:04d}".encode(), f"val:{i}".encode())
+            txn.commit()
+
+        narrow = cf.range_cost(b"key:0010", b"key:0015")
+        wide = cf.range_cost(b"key:0000", b"key:0049")
+        # Wide range should generally cost >= narrow range
+        assert wide >= narrow
+
+    def test_range_cost_comparison(self, db, cf):
+        """Test comparing costs of different ranges."""
+        with db.begin_txn() as txn:
+            for i in range(100):
+                txn.put(cf, f"user:{i:04d}".encode(), f"data:{i}".encode())
+            txn.commit()
+
+        cost_a = cf.range_cost(b"user:0000", b"user:0009")
+        cost_b = cf.range_cost(b"user:0000", b"user:0099")
+        # Both should be valid floats
+        assert isinstance(cost_a, float)
+        assert isinstance(cost_b, float)
+
+
+class TestLoadConfigFromIni:
+    """Tests for loading column family config from INI files."""
+
+    def test_save_and_load_roundtrip(self, temp_db_path):
+        """Test that saving and loading config produces equivalent results."""
+        original = tidesdb.default_column_family_config()
+        original.write_buffer_size = 32 * 1024 * 1024
+        original.compression_algorithm = tidesdb.CompressionAlgorithm.ZSTD_COMPRESSION
+        original.enable_bloom_filter = True
+        original.bloom_fpr = 0.001
+        original.sync_mode = tidesdb.SyncMode.SYNC_FULL
+        original.min_levels = 7
+        original.use_btree = True
+
+        ini_path = os.path.join(temp_db_path, "test_config.ini")
+        tidesdb.save_config_to_ini(ini_path, "my_cf", original)
+
+        loaded = tidesdb.load_config_from_ini(ini_path, "my_cf")
+
+        assert loaded.write_buffer_size == original.write_buffer_size
+        assert loaded.compression_algorithm == original.compression_algorithm
+        assert loaded.enable_bloom_filter == original.enable_bloom_filter
+        assert abs(loaded.bloom_fpr - original.bloom_fpr) < 1e-9
+        assert loaded.sync_mode == original.sync_mode
+        assert loaded.min_levels == original.min_levels
+        assert loaded.use_btree == original.use_btree
+
+    def test_load_nonexistent_file_raises(self, temp_db_path):
+        """Test that loading from a non-existent file raises error."""
+        ini_path = os.path.join(temp_db_path, "nonexistent.ini")
+        with pytest.raises(tidesdb.TidesDBError):
+            tidesdb.load_config_from_ini(ini_path, "my_cf")
+
+    def test_load_preserves_all_fields(self, temp_db_path):
+        """Test that all configuration fields survive a save/load roundtrip."""
+        original = tidesdb.default_column_family_config()
+        original.level_size_ratio = 8
+        original.dividing_level_offset = 3
+        original.klog_value_threshold = 1024
+        original.index_sample_ratio = 2
+        original.block_index_prefix_len = 32
+        original.sync_interval_us = 500000
+        original.skip_list_max_level = 16
+        original.skip_list_probability = 0.5
+        original.min_disk_space = 200 * 1024 * 1024
+        original.l1_file_count_trigger = 8
+        original.l0_queue_stall_threshold = 30
+
+        ini_path = os.path.join(temp_db_path, "full_config.ini")
+        tidesdb.save_config_to_ini(ini_path, "full_cf", original)
+
+        loaded = tidesdb.load_config_from_ini(ini_path, "full_cf")
+
+        assert loaded.level_size_ratio == original.level_size_ratio
+        assert loaded.dividing_level_offset == original.dividing_level_offset
+        assert loaded.klog_value_threshold == original.klog_value_threshold
+        assert loaded.index_sample_ratio == original.index_sample_ratio
+        assert loaded.block_index_prefix_len == original.block_index_prefix_len
+        assert loaded.sync_interval_us == original.sync_interval_us
+        assert loaded.skip_list_max_level == original.skip_list_max_level
+        assert loaded.min_disk_space == original.min_disk_space
+        assert loaded.l1_file_count_trigger == original.l1_file_count_trigger
+        assert loaded.l0_queue_stall_threshold == original.l0_queue_stall_threshold
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -24,6 +24,7 @@ from .tidesdb import (
     default_config,
     default_column_family_config,
     save_config_to_ini,
+    load_config_from_ini,
     COMPARATOR_FUNC,
 )
 
@@ -45,5 +46,6 @@ __all__ = [
     "default_config",
     "default_column_family_config",
     "save_config_to_ini",
+    "load_config_from_ini",
     "COMPARATOR_FUNC",
 ]
