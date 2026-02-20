@@ -400,6 +400,19 @@ _lib.tidesdb_is_flushing.restype = c_int
 _lib.tidesdb_is_compacting.argtypes = [c_void_p]
 _lib.tidesdb_is_compacting.restype = c_int
 
+_lib.tidesdb_range_cost.argtypes = [
+    c_void_p,
+    POINTER(c_uint8),
+    c_size_t,
+    POINTER(c_uint8),
+    c_size_t,
+    POINTER(c_double),
+]
+_lib.tidesdb_range_cost.restype = c_int
+
+_lib.tidesdb_cf_config_load_from_ini.argtypes = [c_char_p, c_char_p, POINTER(_CColumnFamilyConfig)]
+_lib.tidesdb_cf_config_load_from_ini.restype = c_int
+
 # Comparator function type: int (*)(const uint8_t*, size_t, const uint8_t*, size_t, void*)
 COMPARATOR_FUNC = ctypes.CFUNCTYPE(c_int, POINTER(c_uint8), c_size_t, POINTER(c_uint8), c_size_t, c_void_p)
 DESTROY_FUNC = ctypes.CFUNCTYPE(None, c_void_p)
@@ -568,6 +581,49 @@ def save_config_to_ini(file_path: str, cf_name: str, config: ColumnFamilyConfig)
     )
     if result != TDB_SUCCESS:
         raise TidesDBError.from_code(result, "failed to save config to INI file")
+
+
+def load_config_from_ini(file_path: str, cf_name: str) -> ColumnFamilyConfig:
+    """
+    Load column family configuration from an INI file.
+
+    Args:
+        file_path: Path to the INI file to read
+        cf_name: Name of the section to read (column family name)
+
+    Returns:
+        ColumnFamilyConfig populated from the INI file
+    """
+    c_config = _CColumnFamilyConfig()
+    result = _lib.tidesdb_cf_config_load_from_ini(
+        file_path.encode("utf-8"), cf_name.encode("utf-8"), ctypes.byref(c_config)
+    )
+    if result != TDB_SUCCESS:
+        raise TidesDBError.from_code(result, "failed to load config from INI file")
+
+    return ColumnFamilyConfig(
+        write_buffer_size=c_config.write_buffer_size,
+        level_size_ratio=c_config.level_size_ratio,
+        min_levels=c_config.min_levels,
+        dividing_level_offset=c_config.dividing_level_offset,
+        klog_value_threshold=c_config.klog_value_threshold,
+        compression_algorithm=CompressionAlgorithm(c_config.compression_algorithm),
+        enable_bloom_filter=bool(c_config.enable_bloom_filter),
+        bloom_fpr=c_config.bloom_fpr,
+        enable_block_indexes=bool(c_config.enable_block_indexes),
+        index_sample_ratio=c_config.index_sample_ratio,
+        block_index_prefix_len=c_config.block_index_prefix_len,
+        sync_mode=SyncMode(c_config.sync_mode),
+        sync_interval_us=c_config.sync_interval_us,
+        comparator_name=c_config.comparator_name.decode("utf-8").rstrip("\x00"),
+        skip_list_max_level=c_config.skip_list_max_level,
+        skip_list_probability=c_config.skip_list_probability,
+        default_isolation_level=IsolationLevel(c_config.default_isolation_level),
+        min_disk_space=c_config.min_disk_space,
+        l1_file_count_trigger=c_config.l1_file_count_trigger,
+        l0_queue_stall_threshold=c_config.l0_queue_stall_threshold,
+        use_btree=bool(c_config.use_btree),
+    )
 
 
 class Iterator:
@@ -741,6 +797,36 @@ class ColumnFamily:
         )
         if result != TDB_SUCCESS:
             raise TidesDBError.from_code(result, "failed to update runtime config")
+
+    def range_cost(self, key_a: bytes, key_b: bytes) -> float:
+        """
+        Estimate the computational cost of iterating between two keys.
+
+        The returned value is an opaque double meaningful only for comparison
+        with other values from the same function. It uses only in-memory metadata
+        and performs no disk I/O. Key order does not matter.
+
+        Args:
+            key_a: First key (bound of range)
+            key_b: Second key (bound of range)
+
+        Returns:
+            Estimated traversal cost (higher = more expensive)
+
+        Raises:
+            TidesDBError: If arguments are invalid (NULL pointers, zero-length keys)
+        """
+        key_a_buf = (c_uint8 * len(key_a)).from_buffer_copy(key_a) if key_a else None
+        key_b_buf = (c_uint8 * len(key_b)).from_buffer_copy(key_b) if key_b else None
+        cost = c_double()
+
+        result = _lib.tidesdb_range_cost(
+            self._cf, key_a_buf, len(key_a), key_b_buf, len(key_b), ctypes.byref(cost)
+        )
+        if result != TDB_SUCCESS:
+            raise TidesDBError.from_code(result, "failed to estimate range cost")
+
+        return cost.value
 
     def get_stats(self) -> Stats:
         """Get statistics for this column family."""
