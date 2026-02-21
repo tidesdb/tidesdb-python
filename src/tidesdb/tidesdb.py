@@ -31,7 +31,7 @@ from ctypes import (
     c_double,
     c_float,
     c_int,
-    c_long,
+    c_int64,
     c_size_t,
     c_uint8,
     c_uint32,
@@ -213,7 +213,7 @@ class _CCommitOp(Structure):
         ("key_size", c_size_t),
         ("value", POINTER(c_uint8)),
         ("value_size", c_size_t),
-        ("ttl", c_long),
+        ("ttl", c_int64),
         ("is_delete", c_int),
     ]
 
@@ -311,7 +311,7 @@ _lib.tidesdb_txn_put.argtypes = [
     c_size_t,
     POINTER(c_uint8),
     c_size_t,
-    c_long,
+    c_int64,
 ]
 _lib.tidesdb_txn_put.restype = c_int
 
