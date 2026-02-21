@@ -23,6 +23,7 @@ import ctypes
 import os
 import sys
 from ctypes import (
+    CFUNCTYPE,
     POINTER,
     Structure,
     c_char,
@@ -30,6 +31,7 @@ from ctypes import (
     c_double,
     c_float,
     c_int,
+    c_long,
     c_size_t,
     c_uint8,
     c_uint32,
@@ -198,7 +200,26 @@ class _CColumnFamilyConfig(Structure):
         ("l1_file_count_trigger", c_int),
         ("l0_queue_stall_threshold", c_int),
         ("use_btree", c_int),
+        ("commit_hook_fn", c_void_p),
+        ("commit_hook_ctx", c_void_p),
     ]
+
+
+class _CCommitOp(Structure):
+    """C structure for tidesdb_commit_op_t."""
+
+    _fields_ = [
+        ("key", POINTER(c_uint8)),
+        ("key_size", c_size_t),
+        ("value", POINTER(c_uint8)),
+        ("value_size", c_size_t),
+        ("ttl", c_long),
+        ("is_delete", c_int),
+    ]
+
+
+# Commit hook callback: int (*)(const tidesdb_commit_op_t*, int, uint64_t, void*)
+COMMIT_HOOK_FUNC = CFUNCTYPE(c_int, POINTER(_CCommitOp), c_int, c_uint64, c_void_p)
 
 
 class _CConfig(Structure):
@@ -413,6 +434,9 @@ _lib.tidesdb_range_cost.restype = c_int
 _lib.tidesdb_cf_config_load_from_ini.argtypes = [c_char_p, c_char_p, POINTER(_CColumnFamilyConfig)]
 _lib.tidesdb_cf_config_load_from_ini.restype = c_int
 
+_lib.tidesdb_cf_set_commit_hook.argtypes = [c_void_p, COMMIT_HOOK_FUNC, c_void_p]
+_lib.tidesdb_cf_set_commit_hook.restype = c_int
+
 # Comparator function type: int (*)(const uint8_t*, size_t, const uint8_t*, size_t, void*)
 COMPARATOR_FUNC = ctypes.CFUNCTYPE(c_int, POINTER(c_uint8), c_size_t, POINTER(c_uint8), c_size_t, c_void_p)
 DESTROY_FUNC = ctypes.CFUNCTYPE(None, c_void_p)
@@ -531,6 +555,16 @@ class CacheStats:
     misses: int
     hit_rate: float
     num_partitions: int
+
+
+@dataclass
+class CommitOp:
+    """A single operation from a committed transaction batch."""
+
+    key: bytes
+    value: bytes | None
+    ttl: int
+    is_delete: bool
 
 
 def default_config() -> Config:
@@ -797,6 +831,60 @@ class ColumnFamily:
         )
         if result != TDB_SUCCESS:
             raise TidesDBError.from_code(result, "failed to update runtime config")
+
+    def set_commit_hook(self, callback: callable) -> None:
+        """
+        Set a commit hook (change data capture) callback for this column family.
+
+        The callback fires synchronously after every transaction commit on this
+        column family. It receives the full batch of committed operations
+        atomically, enabling real-time change data capture.
+
+        The callback signature is:
+            callback(ops: list[CommitOp], commit_seq: int) -> int
+
+        Return 0 from the callback on success. A non-zero return is logged as a
+        warning but does not roll back the commit.
+
+        Args:
+            callback: Python callable with the signature above
+        """
+        def c_hook(ops_ptr, num_ops, commit_seq, ctx_ptr):
+            ops = []
+            for i in range(num_ops):
+                c_op = ops_ptr[i]
+                key = ctypes.string_at(c_op.key, c_op.key_size) if c_op.key and c_op.key_size > 0 else b""
+                value = ctypes.string_at(c_op.value, c_op.value_size) if c_op.value and c_op.value_size > 0 else None
+                ops.append(CommitOp(
+                    key=key,
+                    value=value,
+                    ttl=c_op.ttl,
+                    is_delete=bool(c_op.is_delete),
+                ))
+            try:
+                return callback(ops, commit_seq)
+            except Exception:
+                return -1
+
+        c_func = COMMIT_HOOK_FUNC(c_hook)
+
+        # Store reference to prevent garbage collection
+        if not hasattr(self, "_commit_hook_ref"):
+            self._commit_hook_ref = None
+        self._commit_hook_ref = c_func
+
+        result = _lib.tidesdb_cf_set_commit_hook(self._cf, c_func, None)
+        if result != TDB_SUCCESS:
+            raise TidesDBError.from_code(result, "failed to set commit hook")
+
+    def clear_commit_hook(self) -> None:
+        """Disable the commit hook for this column family."""
+        result = _lib.tidesdb_cf_set_commit_hook(self._cf, COMMIT_HOOK_FUNC(0), None)
+        if result != TDB_SUCCESS:
+            raise TidesDBError.from_code(result, "failed to clear commit hook")
+
+        if hasattr(self, "_commit_hook_ref"):
+            self._commit_hook_ref = None
 
     def range_cost(self, key_a: bytes, key_b: bytes) -> float:
         """
