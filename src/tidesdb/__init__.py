@@ -25,7 +25,9 @@ from .tidesdb import (
     default_column_family_config,
     save_config_to_ini,
     load_config_from_ini,
+    CommitOp,
     COMPARATOR_FUNC,
+    COMMIT_HOOK_FUNC,
 )
 
 __version__ = "0.9.1"
@@ -47,5 +49,7 @@ __all__ = [
     "default_column_family_config",
     "save_config_to_ini",
     "load_config_from_ini",
+    "CommitOp",
     "COMPARATOR_FUNC",
+    "COMMIT_HOOK_FUNC",
 ]

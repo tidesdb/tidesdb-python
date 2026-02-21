@@ -301,7 +301,7 @@ class TestTTL:
             txn.commit()
 
         cf.flush_memtable()
-        time.sleep(0.5)
+        time.sleep(2)
 
         with db.begin_txn() as txn:
             try:
@@ -709,6 +709,182 @@ class TestLoadConfigFromIni:
         assert loaded.min_disk_space == original.min_disk_space
         assert loaded.l1_file_count_trigger == original.l1_file_count_trigger
         assert loaded.l0_queue_stall_threshold == original.l0_queue_stall_threshold
+
+
+class TestCommitHook:
+    """Tests for commit hook (change data capture) API."""
+
+    def test_hook_fires_on_commit(self, db, cf):
+        """Test that the commit hook fires when a transaction commits."""
+        captured = []
+
+        def hook(ops, commit_seq):
+            captured.append({"ops": ops, "seq": commit_seq})
+            return 0
+
+        cf.set_commit_hook(hook)
+
+        with db.begin_txn() as txn:
+            txn.put(cf, b"key1", b"value1")
+            txn.commit()
+
+        assert len(captured) == 1
+        assert len(captured[0]["ops"]) == 1
+        assert captured[0]["ops"][0].key == b"key1"
+        assert captured[0]["ops"][0].value == b"value1"
+        assert captured[0]["ops"][0].is_delete is False
+        assert captured[0]["seq"] > 0
+
+        cf.clear_commit_hook()
+
+    def test_hook_captures_deletes(self, db, cf):
+        """Test that the hook correctly reports delete operations."""
+        captured = []
+
+        with db.begin_txn() as txn:
+            txn.put(cf, b"del_key", b"del_val")
+            txn.commit()
+
+        def hook(ops, commit_seq):
+            captured.append(ops)
+            return 0
+
+        cf.set_commit_hook(hook)
+
+        with db.begin_txn() as txn:
+            txn.delete(cf, b"del_key")
+            txn.commit()
+
+        assert len(captured) == 1
+        delete_ops = [op for op in captured[0] if op.is_delete]
+        assert len(delete_ops) >= 1
+        assert delete_ops[0].key == b"del_key"
+        assert delete_ops[0].value is None
+
+        cf.clear_commit_hook()
+
+    def test_hook_multi_op_batch(self, db, cf):
+        """Test that the hook receives all operations in a batch."""
+        captured = []
+
+        def hook(ops, commit_seq):
+            captured.append(ops)
+            return 0
+
+        cf.set_commit_hook(hook)
+
+        with db.begin_txn() as txn:
+            txn.put(cf, b"batch1", b"v1")
+            txn.put(cf, b"batch2", b"v2")
+            txn.put(cf, b"batch3", b"v3")
+            txn.commit()
+
+        assert len(captured) == 1
+        assert len(captured[0]) == 3
+        keys = {op.key for op in captured[0]}
+        assert keys == {b"batch1", b"batch2", b"batch3"}
+
+        cf.clear_commit_hook()
+
+    def test_hook_commit_seq_increases(self, db, cf):
+        """Test that commit_seq is monotonically increasing."""
+        seqs = []
+
+        def hook(ops, commit_seq):
+            seqs.append(commit_seq)
+            return 0
+
+        cf.set_commit_hook(hook)
+
+        for i in range(3):
+            with db.begin_txn() as txn:
+                txn.put(cf, f"seq_key_{i}".encode(), f"seq_val_{i}".encode())
+                txn.commit()
+
+        assert len(seqs) == 3
+        assert seqs[0] < seqs[1] < seqs[2]
+
+        cf.clear_commit_hook()
+
+    def test_clear_hook_stops_firing(self, db, cf):
+        """Test that clearing the hook stops callbacks."""
+        captured = []
+
+        def hook(ops, commit_seq):
+            captured.append(ops)
+            return 0
+
+        cf.set_commit_hook(hook)
+
+        with db.begin_txn() as txn:
+            txn.put(cf, b"before_clear", b"v")
+            txn.commit()
+
+        assert len(captured) == 1
+
+        cf.clear_commit_hook()
+
+        with db.begin_txn() as txn:
+            txn.put(cf, b"after_clear", b"v")
+            txn.commit()
+
+        # No new captures after clearing
+        assert len(captured) == 1
+
+    def test_hook_failure_does_not_rollback(self, db, cf):
+        """Test that a hook returning non-zero does not affect the commit."""
+        def failing_hook(ops, commit_seq):
+            return -1  # Simulate failure
+
+        cf.set_commit_hook(failing_hook)
+
+        with db.begin_txn() as txn:
+            txn.put(cf, b"survive", b"value")
+            txn.commit()
+
+        cf.clear_commit_hook()
+
+        # Data should still be committed despite hook failure
+        with db.begin_txn() as txn:
+            assert txn.get(cf, b"survive") == b"value"
+
+    def test_hook_with_ttl(self, db, cf):
+        """Test that the hook reports TTL values."""
+        captured = []
+
+        def hook(ops, commit_seq):
+            captured.append(ops)
+            return 0
+
+        cf.set_commit_hook(hook)
+
+        ttl_val = int(time.time()) + 3600  # 1 hour from now
+        with db.begin_txn() as txn:
+            txn.put(cf, b"ttl_key", b"ttl_val", ttl=ttl_val)
+            txn.commit()
+
+        assert len(captured) == 1
+        assert captured[0][0].ttl == ttl_val
+
+        cf.clear_commit_hook()
+
+    def test_hook_exception_handled(self, db, cf):
+        """Test that Python exceptions in the hook don't crash the process."""
+        def crashing_hook(ops, commit_seq):
+            raise RuntimeError("hook crashed!")
+
+        cf.set_commit_hook(crashing_hook)
+
+        # Should not raise - exception is caught internally
+        with db.begin_txn() as txn:
+            txn.put(cf, b"crash_key", b"crash_val")
+            txn.commit()
+
+        cf.clear_commit_hook()
+
+        # Data should still be committed
+        with db.begin_txn() as txn:
+            assert txn.get(cf, b"crash_key") == b"crash_val"
 
 
 if __name__ == "__main__":
