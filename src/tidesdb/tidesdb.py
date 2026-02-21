@@ -311,7 +311,7 @@ _lib.tidesdb_txn_put.argtypes = [
     c_size_t,
     POINTER(c_uint8),
     c_size_t,
-    c_int,
+    c_long,
 ]
 _lib.tidesdb_txn_put.restype = c_int
 

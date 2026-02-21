@@ -301,7 +301,7 @@ class TestTTL:
             txn.commit()
 
         cf.flush_memtable()
-        time.sleep(0.5)
+        time.sleep(2)
 
         with db.begin_txn() as txn:
             try:
