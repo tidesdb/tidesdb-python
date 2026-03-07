@@ -232,6 +232,7 @@ class _CConfig(Structure):
         ("log_level", c_int),
         ("block_cache_size", c_size_t),
         ("max_open_sstables", c_size_t),
+        ("max_memory_usage", c_size_t),
         ("log_to_file", c_int),
         ("log_truncation_at", c_size_t),
     ]
@@ -444,6 +445,12 @@ DESTROY_FUNC = ctypes.CFUNCTYPE(None, c_void_p)
 _lib.tidesdb_register_comparator.argtypes = [c_void_p, c_char_p, COMPARATOR_FUNC, c_void_p, DESTROY_FUNC]
 _lib.tidesdb_register_comparator.restype = c_int
 
+_lib.tidesdb_get_comparator.argtypes = [c_void_p, c_char_p, POINTER(COMPARATOR_FUNC), POINTER(c_void_p)]
+_lib.tidesdb_get_comparator.restype = c_int
+
+_lib.tidesdb_delete_column_family.argtypes = [c_void_p, c_void_p]
+_lib.tidesdb_delete_column_family.restype = c_int
+
 
 @dataclass
 class Config:
@@ -455,6 +462,7 @@ class Config:
     log_level: LogLevel = LogLevel.LOG_INFO
     block_cache_size: int = 64 * 1024 * 1024
     max_open_sstables: int = 256
+    max_memory_usage: int = 0
     log_to_file: bool = False
     log_truncation_at: int = 24 * 1024 * 1024
 
@@ -1230,6 +1238,7 @@ class TidesDB:
             log_level=int(config.log_level),
             block_cache_size=config.block_cache_size,
             max_open_sstables=config.max_open_sstables,
+            max_memory_usage=config.max_memory_usage,
             log_to_file=1 if config.log_to_file else 0,
             log_truncation_at=config.log_truncation_at,
         )
@@ -1251,6 +1260,7 @@ class TidesDB:
         log_level: LogLevel = LogLevel.LOG_INFO,
         block_cache_size: int = 64 * 1024 * 1024,
         max_open_sstables: int = 256,
+        max_memory_usage: int = 0,
         log_to_file: bool = False,
         log_truncation_at: int = 24 * 1024 * 1024,
     ) -> TidesDB:
@@ -1264,6 +1274,7 @@ class TidesDB:
             log_level: Logging level
             block_cache_size: Size of block cache in bytes
             max_open_sstables: Maximum number of open SSTables
+            max_memory_usage: Global memory limit in bytes (0 = auto, 50% of system RAM)
             log_to_file: Write logs to file instead of stderr
             log_truncation_at: Log file truncation size in bytes (0 = no truncation)
 
@@ -1277,6 +1288,7 @@ class TidesDB:
             log_level=log_level,
             block_cache_size=block_cache_size,
             max_open_sstables=max_open_sstables,
+            max_memory_usage=max_memory_usage,
             log_to_file=log_to_file,
             log_truncation_at=log_truncation_at,
         )
@@ -1599,10 +1611,50 @@ class TidesDB:
         self._comparator_refs.append(c_func)
 
         result = _lib.tidesdb_register_comparator(
-            self._db, name.encode("utf-8"), c_func, None, None
+            self._db, name.encode("utf-8"), c_func, c_void_p(None), DESTROY_FUNC()
         )
         if result != TDB_SUCCESS:
             raise TidesDBError.from_code(result, "failed to register comparator")
+
+    def get_comparator(self, name: str) -> bool:
+        """
+        Check if a comparator is registered by name.
+
+        Args:
+            name: Name of the comparator to look up
+
+        Returns:
+            True if the comparator is registered, False otherwise
+        """
+        if self._closed:
+            raise TidesDBError("Database is closed")
+
+        fn = COMPARATOR_FUNC()
+        ctx = c_void_p()
+        result = _lib.tidesdb_get_comparator(
+            self._db, name.encode("utf-8"), ctypes.byref(fn), ctypes.byref(ctx)
+        )
+        return result == TDB_SUCCESS
+
+    def delete_column_family(self, cf: ColumnFamily) -> None:
+        """
+        Delete a column family by pointer (skips name lookup).
+
+        This is faster than drop_column_family() when you already hold a
+        ColumnFamily handle, as it avoids a redundant linear scan by name.
+
+        Args:
+            cf: Column family handle to delete
+
+        Raises:
+            TidesDBError: If deletion fails
+        """
+        if self._closed:
+            raise TidesDBError("Database is closed")
+
+        result = _lib.tidesdb_delete_column_family(self._db, cf._cf)
+        if result != TDB_SUCCESS:
+            raise TidesDBError.from_code(result, "failed to delete column family")
 
     def __enter__(self) -> TidesDB:
         return self

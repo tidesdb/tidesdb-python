@@ -887,5 +887,85 @@ class TestCommitHook:
             assert txn.get(cf, b"crash_key") == b"crash_val"
 
 
+class TestGetComparator:
+    """Tests for get_comparator operations."""
+
+    def test_builtin_comparator_exists(self, db):
+        """Test that built-in comparators are registered."""
+        assert db.get_comparator("memcmp") is True
+        assert db.get_comparator("reverse") is True
+        assert db.get_comparator("lexicographic") is True
+
+    def test_nonexistent_comparator(self, db):
+        """Test that a non-existent comparator returns False."""
+        assert db.get_comparator("nonexistent_comp") is False
+
+    def test_custom_comparator_registered(self, db):
+        """Test that a custom registered comparator is found."""
+        def my_cmp(k1: bytes, k2: bytes) -> int:
+            if k1 < k2:
+                return -1
+            elif k1 > k2:
+                return 1
+            return 0
+
+        db.register_comparator("my_test_cmp", my_cmp)
+        assert db.get_comparator("my_test_cmp") is True
+
+
+class TestDeleteColumnFamily:
+    """Tests for delete_column_family (by pointer) operations."""
+
+    def test_delete_by_pointer(self, db):
+        """Test deleting a column family by pointer."""
+        db.create_column_family("del_cf")
+        cf = db.get_column_family("del_cf")
+        assert cf is not None
+
+        db.delete_column_family(cf)
+
+        with pytest.raises(tidesdb.TidesDBError):
+            db.get_column_family("del_cf")
+
+    def test_delete_with_data(self, db):
+        """Test deleting a column family that contains data."""
+        db.create_column_family("data_cf")
+        cf = db.get_column_family("data_cf")
+
+        with db.begin_txn() as txn:
+            txn.put(cf, b"key1", b"value1")
+            txn.commit()
+
+        db.delete_column_family(cf)
+
+        with pytest.raises(tidesdb.TidesDBError):
+            db.get_column_family("data_cf")
+
+
+class TestMaxMemoryUsage:
+    """Tests for max_memory_usage configuration."""
+
+    def test_config_default(self):
+        """Test that default max_memory_usage is 0."""
+        config = tidesdb.Config(db_path="/tmp/test")
+        assert config.max_memory_usage == 0
+
+    def test_open_with_max_memory_usage(self, temp_db_path):
+        """Test opening a database with max_memory_usage set."""
+        db = tidesdb.TidesDB.open(temp_db_path, max_memory_usage=0)
+        assert db is not None
+        db.close()
+
+    def test_config_with_max_memory_usage(self, temp_db_path):
+        """Test Config with explicit max_memory_usage."""
+        config = tidesdb.Config(
+            db_path=temp_db_path,
+            max_memory_usage=512 * 1024 * 1024,  # 512MB
+        )
+        db = tidesdb.TidesDB(config)
+        assert db is not None
+        db.close()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
