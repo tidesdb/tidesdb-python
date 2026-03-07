@@ -30,7 +30,7 @@ from .tidesdb import (
     COMMIT_HOOK_FUNC,
 )
 
-__version__ = "0.9.1"
+__version__ = "0.9.5"
 __all__ = [
     "TidesDB",
     "Transaction",
