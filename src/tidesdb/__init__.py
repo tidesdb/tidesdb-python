@@ -16,6 +16,7 @@ from .tidesdb import (
     ColumnFamilyConfig,
     Stats,
     CacheStats,
+    DbStats,
     CompressionAlgorithm,
     SyncMode,
     LogLevel,
@@ -30,7 +31,7 @@ from .tidesdb import (
     COMMIT_HOOK_FUNC,
 )
 
-__version__ = "0.9.5"
+__version__ = "0.9.6"
 __all__ = [
     "TidesDB",
     "Transaction",
@@ -40,6 +41,7 @@ __all__ = [
     "ColumnFamilyConfig",
     "Stats",
     "CacheStats",
+    "DbStats",
     "CompressionAlgorithm",
     "SyncMode",
     "LogLevel",
