@@ -967,5 +967,177 @@ class TestMaxMemoryUsage:
         db.close()
 
 
+class TestPurgeCf:
+    """Tests for column family purge operations."""
+
+    def test_purge_cf_basic(self, db, cf):
+        """Test purging a column family with data."""
+        with db.begin_txn() as txn:
+            for i in range(50):
+                txn.put(cf, f"purge_key_{i}".encode(), f"purge_val_{i}".encode())
+            txn.commit()
+
+        cf.purge()
+
+        # Data should still be accessible after purge
+        with db.begin_txn() as txn:
+            for i in range(50):
+                value = txn.get(cf, f"purge_key_{i}".encode())
+                assert value == f"purge_val_{i}".encode()
+
+    def test_purge_cf_empty(self, db, cf):
+        """Test purging an empty column family succeeds."""
+        cf.purge()
+
+    def test_purge_cf_after_deletes(self, db, cf):
+        """Test purge after bulk deletes reclaims tombstones."""
+        with db.begin_txn() as txn:
+            for i in range(20):
+                txn.put(cf, f"del_key_{i}".encode(), f"del_val_{i}".encode())
+            txn.commit()
+
+        with db.begin_txn() as txn:
+            for i in range(20):
+                txn.delete(cf, f"del_key_{i}".encode())
+            txn.commit()
+
+        cf.purge()
+
+        # Deleted keys should not be found
+        with db.begin_txn() as txn:
+            for i in range(20):
+                with pytest.raises(tidesdb.TidesDBError):
+                    txn.get(cf, f"del_key_{i}".encode())
+
+
+class TestPurgeDb:
+    """Tests for database-level purge operations."""
+
+    def test_purge_db_basic(self, db):
+        """Test purging the entire database."""
+        db.create_column_family("purge_cf1")
+        db.create_column_family("purge_cf2")
+        cf1 = db.get_column_family("purge_cf1")
+        cf2 = db.get_column_family("purge_cf2")
+
+        with db.begin_txn() as txn:
+            txn.put(cf1, b"k1", b"v1")
+            txn.put(cf2, b"k2", b"v2")
+            txn.commit()
+
+        db.purge()
+
+        # Data should still be accessible
+        with db.begin_txn() as txn:
+            assert txn.get(cf1, b"k1") == b"v1"
+            assert txn.get(cf2, b"k2") == b"v2"
+
+        db.drop_column_family("purge_cf1")
+        db.drop_column_family("purge_cf2")
+
+    def test_purge_db_empty(self, db):
+        """Test purging a database with no column families succeeds."""
+        db.purge()
+
+
+class TestSyncWal:
+    """Tests for WAL sync operations."""
+
+    def test_sync_wal_basic(self, db, cf):
+        """Test syncing WAL after writes."""
+        with db.begin_txn() as txn:
+            txn.put(cf, b"sync_key", b"sync_val")
+            txn.commit()
+
+        cf.sync_wal()
+
+        # Data should be accessible after sync
+        with db.begin_txn() as txn:
+            assert txn.get(cf, b"sync_key") == b"sync_val"
+
+    def test_sync_wal_empty_cf(self, db, cf):
+        """Test syncing WAL on an empty column family."""
+        cf.sync_wal()
+
+    def test_sync_wal_after_batch(self, db, cf):
+        """Test syncing WAL after a batch of writes."""
+        with db.begin_txn() as txn:
+            for i in range(100):
+                txn.put(cf, f"batch_{i}".encode(), f"val_{i}".encode())
+            txn.commit()
+
+        cf.sync_wal()
+
+        with db.begin_txn() as txn:
+            for i in range(100):
+                value = txn.get(cf, f"batch_{i}".encode())
+                assert value == f"val_{i}".encode()
+
+
+class TestDbStats:
+    """Tests for database-level statistics."""
+
+    def test_db_stats_basic(self, db):
+        """Test getting database stats."""
+        stats = db.get_db_stats()
+        assert isinstance(stats, tidesdb.DbStats)
+        assert stats.num_column_families >= 0
+        assert stats.total_memory > 0
+        assert stats.resolved_memory_limit > 0
+        assert stats.memory_pressure_level >= 0
+        assert stats.global_seq >= 0
+
+    def test_db_stats_with_cf(self, db, cf):
+        """Test that db stats reflect column family count."""
+        stats = db.get_db_stats()
+        assert stats.num_column_families >= 1
+
+    def test_db_stats_after_writes(self, db, cf):
+        """Test db stats after writing data."""
+        with db.begin_txn() as txn:
+            for i in range(50):
+                txn.put(cf, f"stats_key_{i}".encode(), f"stats_val_{i}".encode())
+            txn.commit()
+
+        stats = db.get_db_stats()
+        assert stats.num_column_families >= 1
+        assert stats.total_memtable_bytes >= 0
+        assert stats.total_sstable_count >= 0
+        assert stats.total_data_size_bytes >= 0
+
+    def test_db_stats_all_fields_present(self, db):
+        """Test that all DbStats fields are populated."""
+        stats = db.get_db_stats()
+        assert isinstance(stats.num_column_families, int)
+        assert isinstance(stats.total_memory, int)
+        assert isinstance(stats.available_memory, int)
+        assert isinstance(stats.resolved_memory_limit, int)
+        assert isinstance(stats.memory_pressure_level, int)
+        assert isinstance(stats.flush_pending_count, int)
+        assert isinstance(stats.total_memtable_bytes, int)
+        assert isinstance(stats.total_immutable_count, int)
+        assert isinstance(stats.total_sstable_count, int)
+        assert isinstance(stats.total_data_size_bytes, int)
+        assert isinstance(stats.num_open_sstables, int)
+        assert isinstance(stats.global_seq, int)
+        assert isinstance(stats.txn_memory_bytes, int)
+        assert isinstance(stats.compaction_queue_size, int)
+        assert isinstance(stats.flush_queue_size, int)
+
+    def test_db_stats_after_purge(self, db, cf):
+        """Test db stats after purging."""
+        with db.begin_txn() as txn:
+            for i in range(20):
+                txn.put(cf, f"purge_stats_{i}".encode(), f"val_{i}".encode())
+            txn.commit()
+
+        db.purge()
+
+        stats = db.get_db_stats()
+        # After purge, flush and compaction queues should be drained
+        assert stats.flush_queue_size == 0
+        assert stats.compaction_queue_size == 0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

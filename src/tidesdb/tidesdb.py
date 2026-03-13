@@ -275,6 +275,28 @@ class _CCacheStats(Structure):
     ]
 
 
+class _CDbStats(Structure):
+    """C structure for tidesdb_db_stats_t."""
+
+    _fields_ = [
+        ("num_column_families", c_int),
+        ("total_memory", c_uint64),
+        ("available_memory", c_uint64),
+        ("resolved_memory_limit", c_size_t),
+        ("memory_pressure_level", c_int),
+        ("flush_pending_count", c_int),
+        ("total_memtable_bytes", c_int64),
+        ("total_immutable_count", c_int),
+        ("total_sstable_count", c_int),
+        ("total_data_size_bytes", c_uint64),
+        ("num_open_sstables", c_int),
+        ("global_seq", c_uint64),
+        ("txn_memory_bytes", c_int64),
+        ("compaction_queue_size", c_size_t),
+        ("flush_queue_size", c_size_t),
+    ]
+
+
 _lib.tidesdb_default_column_family_config.argtypes = []
 _lib.tidesdb_default_column_family_config.restype = _CColumnFamilyConfig
 
@@ -451,6 +473,18 @@ _lib.tidesdb_get_comparator.restype = c_int
 _lib.tidesdb_delete_column_family.argtypes = [c_void_p, c_void_p]
 _lib.tidesdb_delete_column_family.restype = c_int
 
+_lib.tidesdb_purge_cf.argtypes = [c_void_p]
+_lib.tidesdb_purge_cf.restype = c_int
+
+_lib.tidesdb_purge.argtypes = [c_void_p]
+_lib.tidesdb_purge.restype = c_int
+
+_lib.tidesdb_sync_wal.argtypes = [c_void_p]
+_lib.tidesdb_sync_wal.restype = c_int
+
+_lib.tidesdb_get_db_stats.argtypes = [c_void_p, POINTER(_CDbStats)]
+_lib.tidesdb_get_db_stats.restype = c_int
+
 
 @dataclass
 class Config:
@@ -563,6 +597,27 @@ class CacheStats:
     misses: int
     hit_rate: float
     num_partitions: int
+
+
+@dataclass
+class DbStats:
+    """Database-level aggregate statistics."""
+
+    num_column_families: int
+    total_memory: int
+    available_memory: int
+    resolved_memory_limit: int
+    memory_pressure_level: int
+    flush_pending_count: int
+    total_memtable_bytes: int
+    total_immutable_count: int
+    total_sstable_count: int
+    total_data_size_bytes: int
+    num_open_sstables: int
+    global_seq: int
+    txn_memory_bytes: int
+    compaction_queue_size: int
+    flush_queue_size: int
 
 
 @dataclass
@@ -815,6 +870,48 @@ class ColumnFamily:
     def is_compacting(self) -> bool:
         """Check if a compaction operation is in progress for this column family."""
         return bool(_lib.tidesdb_is_compacting(self._cf))
+
+    def purge(self) -> None:
+        """
+        Force a synchronous flush and aggressive compaction for this column family.
+
+        Unlike flush_memtable() and compact() (which are non-blocking), purge blocks
+        until all flush and compaction I/O is complete.
+
+        Behavior:
+        1. Waits for any in-progress flush to complete
+        2. Force-flushes the active memtable (even if below threshold)
+        3. Waits for flush I/O to fully complete
+        4. Waits for any in-progress compaction to complete
+        5. Triggers synchronous compaction inline (bypasses the compaction queue)
+        6. Waits for any queued compaction to drain
+
+        Use cases:
+        - Before backup or checkpoint: ensure all data is on disk and compacted
+        - After bulk deletes: reclaim space immediately by compacting away tombstones
+        - Manual maintenance: force a clean state during a maintenance window
+        - Pre-shutdown: ensure all pending work is complete before closing
+        """
+        result = _lib.tidesdb_purge_cf(self._cf)
+        if result != TDB_SUCCESS:
+            raise TidesDBError.from_code(result, "failed to purge column family")
+
+    def sync_wal(self) -> None:
+        """
+        Force an immediate fsync of the active write-ahead log for this column family.
+
+        This is useful for explicit durability control when using SYNC_NONE or
+        SYNC_INTERVAL modes.
+
+        Use cases:
+        - Application-controlled durability: sync the WAL at specific points
+        - Pre-checkpoint: ensure all buffered WAL data is on disk
+        - Graceful shutdown: flush WAL buffers before closing
+        - Critical writes: force durability for specific high-value writes
+        """
+        result = _lib.tidesdb_sync_wal(self._cf)
+        if result != TDB_SUCCESS:
+            raise TidesDBError.from_code(result, "failed to sync WAL")
 
     def update_runtime_config(self, config: ColumnFamilyConfig, persist_to_disk: bool = True) -> None:
         """
@@ -1655,6 +1752,62 @@ class TidesDB:
         result = _lib.tidesdb_delete_column_family(self._db, cf._cf)
         if result != TDB_SUCCESS:
             raise TidesDBError.from_code(result, "failed to delete column family")
+
+    def purge(self) -> None:
+        """
+        Force a synchronous flush and aggressive compaction for all column families,
+        then drain both the global flush and compaction queues.
+
+        Unlike flush_memtable() and compact() (which are non-blocking), purge blocks
+        until all work is complete across all column families.
+
+        Behavior:
+        1. Calls purge on each column family
+        2. Drains the global flush queue
+        3. Drains the global compaction queue
+
+        Raises:
+            TidesDBError: If purge fails for any column family
+        """
+        if self._closed:
+            raise TidesDBError("Database is closed")
+
+        result = _lib.tidesdb_purge(self._db)
+        if result != TDB_SUCCESS:
+            raise TidesDBError.from_code(result, "failed to purge database")
+
+    def get_db_stats(self) -> DbStats:
+        """
+        Get aggregate statistics across the entire database instance.
+
+        Returns:
+            DbStats instance with database-level statistics
+        """
+        if self._closed:
+            raise TidesDBError("Database is closed")
+
+        c_stats = _CDbStats()
+        result = _lib.tidesdb_get_db_stats(self._db, ctypes.byref(c_stats))
+        if result != TDB_SUCCESS:
+            raise TidesDBError.from_code(result, "failed to get database stats")
+
+        return DbStats(
+            num_column_families=c_stats.num_column_families,
+            total_memory=c_stats.total_memory,
+            available_memory=c_stats.available_memory,
+            resolved_memory_limit=c_stats.resolved_memory_limit,
+            memory_pressure_level=c_stats.memory_pressure_level,
+            flush_pending_count=c_stats.flush_pending_count,
+            total_memtable_bytes=c_stats.total_memtable_bytes,
+            total_immutable_count=c_stats.total_immutable_count,
+            total_sstable_count=c_stats.total_sstable_count,
+            total_data_size_bytes=c_stats.total_data_size_bytes,
+            num_open_sstables=c_stats.num_open_sstables,
+            global_seq=c_stats.global_seq,
+            txn_memory_bytes=c_stats.txn_memory_bytes,
+            compaction_queue_size=c_stats.compaction_queue_size,
+            flush_queue_size=c_stats.flush_queue_size,
+        )
 
     def __enter__(self) -> TidesDB:
         return self
