@@ -14,6 +14,8 @@ from .tidesdb import (
     ColumnFamily,
     Config,
     ColumnFamilyConfig,
+    ObjStoreConfig,
+    ObjStoreBackend,
     Stats,
     CacheStats,
     DbStats,
@@ -24,6 +26,8 @@ from .tidesdb import (
     TidesDBError,
     default_config,
     default_column_family_config,
+    objstore_default_config,
+    objstore_fs_create,
     save_config_to_ini,
     load_config_from_ini,
     CommitOp,
@@ -45,7 +49,7 @@ from .tidesdb import (
     TDB_ERR_READONLY,
 )
 
-__version__ = "0.9.7"
+__version__ = "0.9.8"
 __all__ = [
     "TidesDB",
     "Transaction",
@@ -53,6 +57,8 @@ __all__ = [
     "ColumnFamily",
     "Config",
     "ColumnFamilyConfig",
+    "ObjStoreConfig",
+    "ObjStoreBackend",
     "Stats",
     "CacheStats",
     "DbStats",
@@ -63,6 +69,8 @@ __all__ = [
     "TidesDBError",
     "default_config",
     "default_column_family_config",
+    "objstore_default_config",
+    "objstore_fs_create",
     "save_config_to_ini",
     "load_config_from_ini",
     "CommitOp",

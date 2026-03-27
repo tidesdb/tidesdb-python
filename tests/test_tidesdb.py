@@ -1333,6 +1333,121 @@ class TestIteratorKeyValue:
                     assert isinstance(v, bytes)
 
 
+class TestObjStoreConfig:
+    """Tests for ObjStoreConfig and related functions."""
+
+    def test_objstore_config_defaults(self):
+        """Test ObjStoreConfig default values."""
+        cfg = tidesdb.ObjStoreConfig()
+        assert cfg.local_cache_path is None
+        assert cfg.local_cache_max_bytes == 0
+        assert cfg.cache_on_read is True
+        assert cfg.cache_on_write is True
+        assert cfg.max_concurrent_uploads == 4
+        assert cfg.max_concurrent_downloads == 8
+        assert cfg.multipart_threshold == 64 * 1024 * 1024
+        assert cfg.multipart_part_size == 8 * 1024 * 1024
+        assert cfg.sync_manifest_to_object is True
+        assert cfg.replicate_wal is True
+        assert cfg.wal_upload_sync is False
+        assert cfg.wal_sync_threshold_bytes == 1 * 1024 * 1024
+        assert cfg.wal_sync_on_commit is False
+        assert cfg.replica_mode is False
+        assert cfg.replica_sync_interval_us == 5000000
+        assert cfg.replica_replay_wal is True
+
+    def test_objstore_config_custom(self):
+        """Test ObjStoreConfig with custom values."""
+        cfg = tidesdb.ObjStoreConfig(
+            local_cache_path="/tmp/cache",
+            local_cache_max_bytes=512 * 1024 * 1024,
+            cache_on_read=False,
+            max_concurrent_uploads=16,
+            replica_mode=True,
+            replica_sync_interval_us=1000000,
+            wal_sync_on_commit=True,
+        )
+        assert cfg.local_cache_path == "/tmp/cache"
+        assert cfg.local_cache_max_bytes == 512 * 1024 * 1024
+        assert cfg.cache_on_read is False
+        assert cfg.max_concurrent_uploads == 16
+        assert cfg.replica_mode is True
+        assert cfg.replica_sync_interval_us == 1000000
+        assert cfg.wal_sync_on_commit is True
+
+    def test_objstore_config_to_c_struct(self):
+        """Test ObjStoreConfig _to_c_struct conversion."""
+        cfg = tidesdb.ObjStoreConfig(
+            local_cache_max_bytes=256 * 1024 * 1024,
+            max_concurrent_uploads=8,
+            replica_mode=True,
+        )
+        c_cfg = cfg._to_c_struct()
+        assert c_cfg.local_cache_max_bytes == 256 * 1024 * 1024
+        assert c_cfg.max_concurrent_uploads == 8
+        assert c_cfg.replica_mode == 1
+
+    def test_objstore_default_config_from_c(self):
+        """Test objstore_default_config() retrieves defaults from C library."""
+        cfg = tidesdb.objstore_default_config()
+        assert isinstance(cfg, tidesdb.ObjStoreConfig)
+        assert isinstance(cfg.cache_on_read, bool)
+        assert isinstance(cfg.max_concurrent_uploads, int)
+        assert isinstance(cfg.replica_mode, bool)
+
+    def test_objstore_backend_enum(self):
+        """Test ObjStoreBackend enum values."""
+        assert tidesdb.ObjStoreBackend.BACKEND_FS == 0
+        assert tidesdb.ObjStoreBackend.BACKEND_S3 == 1
+        assert tidesdb.ObjStoreBackend.BACKEND_UNKNOWN == 99
+
+    def test_objstore_fs_create(self, temp_db_path):
+        """Test objstore_fs_create creates a valid connector handle."""
+        obj_dir = os.path.join(temp_db_path, "objstore")
+        os.makedirs(obj_dir)
+        handle = tidesdb.objstore_fs_create(obj_dir)
+        assert handle is not None
+
+    def test_config_with_object_store_fields(self):
+        """Test Config accepts object_store and object_store_config fields."""
+        cfg = tidesdb.Config(db_path="/tmp/test")
+        assert cfg.object_store is None
+        assert cfg.object_store_config is None
+
+        os_cfg = tidesdb.ObjStoreConfig(replica_mode=True)
+        cfg2 = tidesdb.Config(db_path="/tmp/test", object_store_config=os_cfg)
+        assert cfg2.object_store_config is not None
+        assert cfg2.object_store_config.replica_mode is True
+
+    def test_open_with_fs_object_store(self, temp_db_path):
+        """Test opening database with filesystem object store connector."""
+        obj_dir = os.path.join(temp_db_path, "objstore")
+        os.makedirs(obj_dir)
+        store = tidesdb.objstore_fs_create(obj_dir)
+        os_cfg = tidesdb.objstore_default_config()
+
+        db = tidesdb.TidesDB.open(
+            os.path.join(temp_db_path, "db"),
+            object_store=store,
+            object_store_config=os_cfg,
+        )
+
+        db.create_column_family("test_cf")
+        cf = db.get_column_family("test_cf")
+
+        with db.begin_txn() as txn:
+            txn.put(cf, b"key1", b"value1")
+            txn.commit()
+
+        with db.begin_txn() as txn:
+            assert txn.get(cf, b"key1") == b"value1"
+
+        stats = db.get_db_stats()
+        assert stats.object_store_enabled is True
+
+        db.close()
+
+
 class TestPromoteToPrimary:
     """Tests for promote_to_primary method."""
 

@@ -138,6 +138,14 @@ class IsolationLevel(IntEnum):
     SERIALIZABLE = 4
 
 
+class ObjStoreBackend(IntEnum):
+    """Object store backend types."""
+
+    BACKEND_FS = 0
+    BACKEND_S3 = 1
+    BACKEND_UNKNOWN = 99
+
+
 class TidesDBError(Exception):
     """Base exception for TidesDB errors."""
 
@@ -225,6 +233,29 @@ class _CCommitOp(Structure):
 
 # Commit hook callback: int (*)(const tidesdb_commit_op_t*, int, uint64_t, void*)
 COMMIT_HOOK_FUNC = CFUNCTYPE(c_int, POINTER(_CCommitOp), c_int, c_uint64, c_void_p)
+
+
+class _CObjStoreConfig(Structure):
+    """C structure for tidesdb_objstore_config_t."""
+
+    _fields_ = [
+        ("local_cache_path", c_char_p),
+        ("local_cache_max_bytes", c_size_t),
+        ("cache_on_read", c_int),
+        ("cache_on_write", c_int),
+        ("max_concurrent_uploads", c_int),
+        ("max_concurrent_downloads", c_int),
+        ("multipart_threshold", c_size_t),
+        ("multipart_part_size", c_size_t),
+        ("sync_manifest_to_object", c_int),
+        ("replicate_wal", c_int),
+        ("wal_upload_sync", c_int),
+        ("wal_sync_threshold_bytes", c_size_t),
+        ("wal_sync_on_commit", c_int),
+        ("replica_mode", c_int),
+        ("replica_sync_interval_us", c_uint64),
+        ("replica_replay_wal", c_int),
+    ]
 
 
 class _CConfig(Structure):
@@ -526,6 +557,57 @@ _lib.tidesdb_get_db_stats.restype = c_int
 _lib.tidesdb_promote_to_primary.argtypes = [c_void_p]
 _lib.tidesdb_promote_to_primary.restype = c_int
 
+_lib.tidesdb_objstore_default_config.argtypes = []
+_lib.tidesdb_objstore_default_config.restype = _CObjStoreConfig
+
+_lib.tidesdb_objstore_fs_create.argtypes = [c_char_p]
+_lib.tidesdb_objstore_fs_create.restype = c_void_p
+
+
+@dataclass
+class ObjStoreConfig:
+    """Configuration for object store mode behavior."""
+
+    local_cache_path: str | None = None
+    local_cache_max_bytes: int = 0
+    cache_on_read: bool = True
+    cache_on_write: bool = True
+    max_concurrent_uploads: int = 4
+    max_concurrent_downloads: int = 8
+    multipart_threshold: int = 64 * 1024 * 1024
+    multipart_part_size: int = 8 * 1024 * 1024
+    sync_manifest_to_object: bool = True
+    replicate_wal: bool = True
+    wal_upload_sync: bool = False
+    wal_sync_threshold_bytes: int = 1 * 1024 * 1024
+    wal_sync_on_commit: bool = False
+    replica_mode: bool = False
+    replica_sync_interval_us: int = 5000000
+    replica_replay_wal: bool = True
+
+    def _to_c_struct(self) -> _CObjStoreConfig:
+        """Convert to C structure."""
+        c_cfg = _CObjStoreConfig()
+        c_cfg.local_cache_path = (
+            self.local_cache_path.encode("utf-8") if self.local_cache_path else None
+        )
+        c_cfg.local_cache_max_bytes = self.local_cache_max_bytes
+        c_cfg.cache_on_read = 1 if self.cache_on_read else 0
+        c_cfg.cache_on_write = 1 if self.cache_on_write else 0
+        c_cfg.max_concurrent_uploads = self.max_concurrent_uploads
+        c_cfg.max_concurrent_downloads = self.max_concurrent_downloads
+        c_cfg.multipart_threshold = self.multipart_threshold
+        c_cfg.multipart_part_size = self.multipart_part_size
+        c_cfg.sync_manifest_to_object = 1 if self.sync_manifest_to_object else 0
+        c_cfg.replicate_wal = 1 if self.replicate_wal else 0
+        c_cfg.wal_upload_sync = 1 if self.wal_upload_sync else 0
+        c_cfg.wal_sync_threshold_bytes = self.wal_sync_threshold_bytes
+        c_cfg.wal_sync_on_commit = 1 if self.wal_sync_on_commit else 0
+        c_cfg.replica_mode = 1 if self.replica_mode else 0
+        c_cfg.replica_sync_interval_us = self.replica_sync_interval_us
+        c_cfg.replica_replay_wal = 1 if self.replica_replay_wal else 0
+        return c_cfg
+
 
 @dataclass
 class Config:
@@ -546,6 +628,8 @@ class Config:
     unified_memtable_skip_list_probability: float = 0.0
     unified_memtable_sync_mode: SyncMode = SyncMode.SYNC_NONE
     unified_memtable_sync_interval_us: int = 0
+    object_store: c_void_p | None = None
+    object_store_config: ObjStoreConfig | None = None
 
 
 @dataclass
@@ -702,6 +786,57 @@ class CommitOp:
 def default_config() -> Config:
     """Get default database configuration."""
     return Config(db_path="")
+
+
+def objstore_default_config() -> ObjStoreConfig:
+    """Get default object store configuration from C library."""
+    c_cfg = _lib.tidesdb_objstore_default_config()
+    path = None
+    if c_cfg.local_cache_path:
+        try:
+            path = c_cfg.local_cache_path.decode("utf-8")
+        except (UnicodeDecodeError, ValueError):
+            path = None
+    return ObjStoreConfig(
+        local_cache_path=path,
+        local_cache_max_bytes=c_cfg.local_cache_max_bytes,
+        cache_on_read=bool(c_cfg.cache_on_read),
+        cache_on_write=bool(c_cfg.cache_on_write),
+        max_concurrent_uploads=c_cfg.max_concurrent_uploads,
+        max_concurrent_downloads=c_cfg.max_concurrent_downloads,
+        multipart_threshold=c_cfg.multipart_threshold,
+        multipart_part_size=c_cfg.multipart_part_size,
+        sync_manifest_to_object=bool(c_cfg.sync_manifest_to_object),
+        replicate_wal=bool(c_cfg.replicate_wal),
+        wal_upload_sync=bool(c_cfg.wal_upload_sync),
+        wal_sync_threshold_bytes=c_cfg.wal_sync_threshold_bytes,
+        wal_sync_on_commit=bool(c_cfg.wal_sync_on_commit),
+        replica_mode=bool(c_cfg.replica_mode),
+        replica_sync_interval_us=c_cfg.replica_sync_interval_us,
+        replica_replay_wal=bool(c_cfg.replica_replay_wal),
+    )
+
+
+def objstore_fs_create(root_dir: str) -> c_void_p:
+    """
+    Create a filesystem-backed object store connector.
+
+    Stores objects as files under root_dir mirroring the key path structure.
+    Useful for testing and local replication.
+
+    Args:
+        root_dir: Directory to store objects in
+
+    Returns:
+        Opaque object store handle for use in Config.object_store
+
+    Raises:
+        TidesDBError: If creation fails
+    """
+    handle = _lib.tidesdb_objstore_fs_create(root_dir.encode("utf-8"))
+    if not handle:
+        raise TidesDBError("failed to create filesystem object store connector", TDB_ERR_IO)
+    return handle
 
 
 def default_column_family_config() -> ColumnFamilyConfig:
@@ -1424,11 +1559,24 @@ class TidesDB:
         """
         self._db: c_void_p | None = None
         self._closed = False
+        self._objstore_config_ref: _CObjStoreConfig | None = None
 
         os.makedirs(config.db_path, exist_ok=True)
         abs_path = os.path.abspath(config.db_path)
 
         self._path_bytes = abs_path.encode("utf-8")
+
+        obj_store_ptr = None
+        obj_store_config_ptr = None
+
+        if config.object_store is not None:
+            obj_store_ptr = config.object_store
+
+        if config.object_store_config is not None:
+            self._objstore_config_ref = config.object_store_config._to_c_struct()
+            obj_store_config_ptr = ctypes.cast(
+                ctypes.pointer(self._objstore_config_ref), c_void_p
+            )
 
         c_config = _CConfig(
             db_path=self._path_bytes,
@@ -1446,8 +1594,8 @@ class TidesDB:
             unified_memtable_skip_list_probability=config.unified_memtable_skip_list_probability,
             unified_memtable_sync_mode=int(config.unified_memtable_sync_mode),
             unified_memtable_sync_interval_us=config.unified_memtable_sync_interval_us,
-            object_store=None,
-            object_store_config=None,
+            object_store=obj_store_ptr,
+            object_store_config=obj_store_config_ptr,
         )
 
         db_ptr = c_void_p()
@@ -1476,6 +1624,8 @@ class TidesDB:
         unified_memtable_skip_list_probability: float = 0.0,
         unified_memtable_sync_mode: SyncMode = SyncMode.SYNC_NONE,
         unified_memtable_sync_interval_us: int = 0,
+        object_store: c_void_p | None = None,
+        object_store_config: ObjStoreConfig | None = None,
     ) -> TidesDB:
         """
         Convenience method to open a database with individual parameters.
@@ -1496,6 +1646,8 @@ class TidesDB:
             unified_memtable_skip_list_probability: Skip list probability for unified memtable
             unified_memtable_sync_mode: Sync mode for unified memtable WAL
             unified_memtable_sync_interval_us: Sync interval in microseconds for unified memtable
+            object_store: Object store connector handle (from objstore_fs_create())
+            object_store_config: Object store behavior configuration
 
         Returns:
             TidesDB instance
@@ -1516,6 +1668,8 @@ class TidesDB:
             unified_memtable_skip_list_probability=unified_memtable_skip_list_probability,
             unified_memtable_sync_mode=unified_memtable_sync_mode,
             unified_memtable_sync_interval_us=unified_memtable_sync_interval_us,
+            object_store=object_store,
+            object_store_config=object_store_config,
         )
         return cls(config)
 
