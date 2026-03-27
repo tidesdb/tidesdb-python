@@ -96,6 +96,7 @@ TDB_ERR_MEMORY_LIMIT = -9
 TDB_ERR_INVALID_DB = -10
 TDB_ERR_UNKNOWN = -11
 TDB_ERR_LOCKED = -12
+TDB_ERR_READONLY = -13
 
 
 class CompressionAlgorithm(IntEnum):
@@ -160,6 +161,7 @@ class TidesDBError(Exception):
             TDB_ERR_INVALID_DB: "invalid database handle",
             TDB_ERR_UNKNOWN: "unknown error",
             TDB_ERR_LOCKED: "database is locked",
+            TDB_ERR_READONLY: "database is read-only",
         }
 
         msg = error_messages.get(code, "unknown error")
@@ -202,6 +204,9 @@ class _CColumnFamilyConfig(Structure):
         ("use_btree", c_int),
         ("commit_hook_fn", c_void_p),
         ("commit_hook_ctx", c_void_p),
+        ("object_target_file_size", c_size_t),
+        ("object_lazy_compaction", c_int),
+        ("object_prefetch_compaction", c_int),
     ]
 
 
@@ -232,9 +237,17 @@ class _CConfig(Structure):
         ("log_level", c_int),
         ("block_cache_size", c_size_t),
         ("max_open_sstables", c_size_t),
-        ("max_memory_usage", c_size_t),
         ("log_to_file", c_int),
         ("log_truncation_at", c_size_t),
+        ("max_memory_usage", c_size_t),
+        ("unified_memtable", c_int),
+        ("unified_memtable_write_buffer_size", c_size_t),
+        ("unified_memtable_skip_list_max_level", c_int),
+        ("unified_memtable_skip_list_probability", c_float),
+        ("unified_memtable_sync_mode", c_int),
+        ("unified_memtable_sync_interval_us", c_uint64),
+        ("object_store", c_void_p),
+        ("object_store_config", c_void_p),
     ]
 
 
@@ -294,6 +307,22 @@ class _CDbStats(Structure):
         ("txn_memory_bytes", c_int64),
         ("compaction_queue_size", c_size_t),
         ("flush_queue_size", c_size_t),
+        ("unified_memtable_enabled", c_int),
+        ("unified_memtable_bytes", c_int64),
+        ("unified_immutable_count", c_int),
+        ("unified_is_flushing", c_int),
+        ("unified_next_cf_index", c_uint32),
+        ("unified_wal_generation", c_uint64),
+        ("object_store_enabled", c_int),
+        ("object_store_connector", c_char_p),
+        ("local_cache_bytes_used", c_size_t),
+        ("local_cache_bytes_max", c_size_t),
+        ("local_cache_num_files", c_int),
+        ("last_uploaded_generation", c_uint64),
+        ("upload_queue_depth", c_size_t),
+        ("total_uploads", c_uint64),
+        ("total_upload_failures", c_uint64),
+        ("replica_mode", c_int),
     ]
 
 
@@ -399,6 +428,15 @@ _lib.tidesdb_iter_key.restype = c_int
 _lib.tidesdb_iter_value.argtypes = [c_void_p, POINTER(POINTER(c_uint8)), POINTER(c_size_t)]
 _lib.tidesdb_iter_value.restype = c_int
 
+_lib.tidesdb_iter_key_value.argtypes = [
+    c_void_p,
+    POINTER(POINTER(c_uint8)),
+    POINTER(c_size_t),
+    POINTER(POINTER(c_uint8)),
+    POINTER(c_size_t),
+]
+_lib.tidesdb_iter_key_value.restype = c_int
+
 _lib.tidesdb_iter_free.argtypes = [c_void_p]
 _lib.tidesdb_iter_free.restype = None
 
@@ -464,7 +502,7 @@ _lib.tidesdb_cf_set_commit_hook.restype = c_int
 COMPARATOR_FUNC = ctypes.CFUNCTYPE(c_int, POINTER(c_uint8), c_size_t, POINTER(c_uint8), c_size_t, c_void_p)
 DESTROY_FUNC = ctypes.CFUNCTYPE(None, c_void_p)
 
-_lib.tidesdb_register_comparator.argtypes = [c_void_p, c_char_p, COMPARATOR_FUNC, c_void_p, DESTROY_FUNC]
+_lib.tidesdb_register_comparator.argtypes = [c_void_p, c_char_p, COMPARATOR_FUNC, c_char_p, c_void_p]
 _lib.tidesdb_register_comparator.restype = c_int
 
 _lib.tidesdb_get_comparator.argtypes = [c_void_p, c_char_p, POINTER(COMPARATOR_FUNC), POINTER(c_void_p)]
@@ -485,6 +523,9 @@ _lib.tidesdb_sync_wal.restype = c_int
 _lib.tidesdb_get_db_stats.argtypes = [c_void_p, POINTER(_CDbStats)]
 _lib.tidesdb_get_db_stats.restype = c_int
 
+_lib.tidesdb_promote_to_primary.argtypes = [c_void_p]
+_lib.tidesdb_promote_to_primary.restype = c_int
+
 
 @dataclass
 class Config:
@@ -499,6 +540,12 @@ class Config:
     max_memory_usage: int = 0
     log_to_file: bool = False
     log_truncation_at: int = 24 * 1024 * 1024
+    unified_memtable: bool = False
+    unified_memtable_write_buffer_size: int = 0
+    unified_memtable_skip_list_max_level: int = 0
+    unified_memtable_skip_list_probability: float = 0.0
+    unified_memtable_sync_mode: SyncMode = SyncMode.SYNC_NONE
+    unified_memtable_sync_interval_us: int = 0
 
 
 @dataclass
@@ -526,6 +573,9 @@ class ColumnFamilyConfig:
     l1_file_count_trigger: int = 4
     l0_queue_stall_threshold: int = 20
     use_btree: bool = False
+    object_target_file_size: int = 0
+    object_lazy_compaction: bool = False
+    object_prefetch_compaction: bool = True
 
     def _to_c_struct(self, name: str = "") -> _CColumnFamilyConfig:
         """Convert to C structure."""
@@ -556,6 +606,9 @@ class ColumnFamilyConfig:
         c_config.l1_file_count_trigger = self.l1_file_count_trigger
         c_config.l0_queue_stall_threshold = self.l0_queue_stall_threshold
         c_config.use_btree = 1 if self.use_btree else 0
+        c_config.object_target_file_size = self.object_target_file_size
+        c_config.object_lazy_compaction = 1 if self.object_lazy_compaction else 0
+        c_config.object_prefetch_compaction = 1 if self.object_prefetch_compaction else 0
 
         name_bytes = self.comparator_name.encode("utf-8")[:TDB_MAX_COMPARATOR_NAME - 1]
         name_bytes = name_bytes + b"\x00" * (TDB_MAX_COMPARATOR_NAME - len(name_bytes))
@@ -618,6 +671,22 @@ class DbStats:
     txn_memory_bytes: int
     compaction_queue_size: int
     flush_queue_size: int
+    unified_memtable_enabled: bool = False
+    unified_memtable_bytes: int = 0
+    unified_immutable_count: int = 0
+    unified_is_flushing: bool = False
+    unified_next_cf_index: int = 0
+    unified_wal_generation: int = 0
+    object_store_enabled: bool = False
+    object_store_connector: str = ""
+    local_cache_bytes_used: int = 0
+    local_cache_bytes_max: int = 0
+    local_cache_num_files: int = 0
+    last_uploaded_generation: int = 0
+    upload_queue_depth: int = 0
+    total_uploads: int = 0
+    total_upload_failures: int = 0
+    replica_mode: bool = False
 
 
 @dataclass
@@ -660,6 +729,9 @@ def default_column_family_config() -> ColumnFamilyConfig:
         l1_file_count_trigger=c_config.l1_file_count_trigger,
         l0_queue_stall_threshold=c_config.l0_queue_stall_threshold,
         use_btree=bool(c_config.use_btree),
+        object_target_file_size=c_config.object_target_file_size,
+        object_lazy_compaction=bool(c_config.object_lazy_compaction),
+        object_prefetch_compaction=bool(c_config.object_prefetch_compaction),
     )
 
 
@@ -720,6 +792,9 @@ def load_config_from_ini(file_path: str, cf_name: str) -> ColumnFamilyConfig:
         l1_file_count_trigger=c_config.l1_file_count_trigger,
         l0_queue_stall_threshold=c_config.l0_queue_stall_threshold,
         use_btree=bool(c_config.use_btree),
+        object_target_file_size=c_config.object_target_file_size,
+        object_lazy_compaction=bool(c_config.object_lazy_compaction),
+        object_prefetch_compaction=bool(c_config.object_prefetch_compaction),
     )
 
 
@@ -814,6 +889,31 @@ class Iterator:
 
         return ctypes.string_at(value_ptr, value_size.value)
 
+    def key_value(self) -> tuple[bytes, bytes]:
+        """Get the current key and value in a single call (more efficient than separate key()/value())."""
+        if self._closed:
+            raise TidesDBError("Iterator is closed")
+
+        key_ptr = POINTER(c_uint8)()
+        key_size = c_size_t()
+        value_ptr = POINTER(c_uint8)()
+        value_size = c_size_t()
+
+        result = _lib.tidesdb_iter_key_value(
+            self._iter,
+            ctypes.byref(key_ptr),
+            ctypes.byref(key_size),
+            ctypes.byref(value_ptr),
+            ctypes.byref(value_size),
+        )
+        if result != TDB_SUCCESS:
+            raise TidesDBError.from_code(result, "failed to get key-value")
+
+        return (
+            ctypes.string_at(key_ptr, key_size.value),
+            ctypes.string_at(value_ptr, value_size.value),
+        )
+
     def close(self) -> None:
         """Free iterator resources."""
         if not self._closed and self._iter:
@@ -833,10 +933,9 @@ class Iterator:
     def __next__(self) -> tuple[bytes, bytes]:
         if not self.valid():
             raise StopIteration
-        key = self.key()
-        value = self.value()
+        kv = self.key_value()
         self.next()
-        return key, value
+        return kv
 
     def __del__(self) -> None:
         if _lib is None:
@@ -1070,6 +1169,9 @@ class ColumnFamily:
                 l1_file_count_trigger=c_cfg.l1_file_count_trigger,
                 l0_queue_stall_threshold=c_cfg.l0_queue_stall_threshold,
                 use_btree=bool(c_cfg.use_btree),
+                object_target_file_size=c_cfg.object_target_file_size,
+                object_lazy_compaction=bool(c_cfg.object_lazy_compaction),
+                object_prefetch_compaction=bool(c_cfg.object_prefetch_compaction),
             )
 
         stats = Stats(
@@ -1335,9 +1437,17 @@ class TidesDB:
             log_level=int(config.log_level),
             block_cache_size=config.block_cache_size,
             max_open_sstables=config.max_open_sstables,
-            max_memory_usage=config.max_memory_usage,
             log_to_file=1 if config.log_to_file else 0,
             log_truncation_at=config.log_truncation_at,
+            max_memory_usage=config.max_memory_usage,
+            unified_memtable=1 if config.unified_memtable else 0,
+            unified_memtable_write_buffer_size=config.unified_memtable_write_buffer_size,
+            unified_memtable_skip_list_max_level=config.unified_memtable_skip_list_max_level,
+            unified_memtable_skip_list_probability=config.unified_memtable_skip_list_probability,
+            unified_memtable_sync_mode=int(config.unified_memtable_sync_mode),
+            unified_memtable_sync_interval_us=config.unified_memtable_sync_interval_us,
+            object_store=None,
+            object_store_config=None,
         )
 
         db_ptr = c_void_p()
@@ -1360,6 +1470,12 @@ class TidesDB:
         max_memory_usage: int = 0,
         log_to_file: bool = False,
         log_truncation_at: int = 24 * 1024 * 1024,
+        unified_memtable: bool = False,
+        unified_memtable_write_buffer_size: int = 0,
+        unified_memtable_skip_list_max_level: int = 0,
+        unified_memtable_skip_list_probability: float = 0.0,
+        unified_memtable_sync_mode: SyncMode = SyncMode.SYNC_NONE,
+        unified_memtable_sync_interval_us: int = 0,
     ) -> TidesDB:
         """
         Convenience method to open a database with individual parameters.
@@ -1374,6 +1490,12 @@ class TidesDB:
             max_memory_usage: Global memory limit in bytes (0 = auto, 50% of system RAM)
             log_to_file: Write logs to file instead of stderr
             log_truncation_at: Log file truncation size in bytes (0 = no truncation)
+            unified_memtable: Enable unified memtable mode
+            unified_memtable_write_buffer_size: Write buffer size for unified memtable
+            unified_memtable_skip_list_max_level: Max skip list level for unified memtable
+            unified_memtable_skip_list_probability: Skip list probability for unified memtable
+            unified_memtable_sync_mode: Sync mode for unified memtable WAL
+            unified_memtable_sync_interval_us: Sync interval in microseconds for unified memtable
 
         Returns:
             TidesDB instance
@@ -1388,6 +1510,12 @@ class TidesDB:
             max_memory_usage=max_memory_usage,
             log_to_file=log_to_file,
             log_truncation_at=log_truncation_at,
+            unified_memtable=unified_memtable,
+            unified_memtable_write_buffer_size=unified_memtable_write_buffer_size,
+            unified_memtable_skip_list_max_level=unified_memtable_skip_list_max_level,
+            unified_memtable_skip_list_probability=unified_memtable_skip_list_probability,
+            unified_memtable_sync_mode=unified_memtable_sync_mode,
+            unified_memtable_sync_interval_us=unified_memtable_sync_interval_us,
         )
         return cls(config)
 
@@ -1708,7 +1836,7 @@ class TidesDB:
         self._comparator_refs.append(c_func)
 
         result = _lib.tidesdb_register_comparator(
-            self._db, name.encode("utf-8"), c_func, c_void_p(None), DESTROY_FUNC()
+            self._db, name.encode("utf-8"), c_func, None, None
         )
         if result != TDB_SUCCESS:
             raise TidesDBError.from_code(result, "failed to register comparator")
@@ -1791,6 +1919,13 @@ class TidesDB:
         if result != TDB_SUCCESS:
             raise TidesDBError.from_code(result, "failed to get database stats")
 
+        connector = ""
+        if c_stats.object_store_connector:
+            try:
+                connector = c_stats.object_store_connector.decode("utf-8")
+            except (UnicodeDecodeError, ValueError):
+                connector = ""
+
         return DbStats(
             num_column_families=c_stats.num_column_families,
             total_memory=c_stats.total_memory,
@@ -1807,7 +1942,40 @@ class TidesDB:
             txn_memory_bytes=c_stats.txn_memory_bytes,
             compaction_queue_size=c_stats.compaction_queue_size,
             flush_queue_size=c_stats.flush_queue_size,
+            unified_memtable_enabled=bool(c_stats.unified_memtable_enabled),
+            unified_memtable_bytes=c_stats.unified_memtable_bytes,
+            unified_immutable_count=c_stats.unified_immutable_count,
+            unified_is_flushing=bool(c_stats.unified_is_flushing),
+            unified_next_cf_index=c_stats.unified_next_cf_index,
+            unified_wal_generation=c_stats.unified_wal_generation,
+            object_store_enabled=bool(c_stats.object_store_enabled),
+            object_store_connector=connector,
+            local_cache_bytes_used=c_stats.local_cache_bytes_used,
+            local_cache_bytes_max=c_stats.local_cache_bytes_max,
+            local_cache_num_files=c_stats.local_cache_num_files,
+            last_uploaded_generation=c_stats.last_uploaded_generation,
+            upload_queue_depth=c_stats.upload_queue_depth,
+            total_uploads=c_stats.total_uploads,
+            total_upload_failures=c_stats.total_upload_failures,
+            replica_mode=bool(c_stats.replica_mode),
         )
+
+    def promote_to_primary(self) -> None:
+        """
+        Promote a replica database to primary mode, enabling writes.
+
+        When a database is opened with object store in replica mode, it is read-only.
+        This method switches it to primary mode so it can accept writes.
+
+        Raises:
+            TidesDBError: If promotion fails (e.g., database is not in replica mode)
+        """
+        if self._closed:
+            raise TidesDBError("Database is closed")
+
+        result = _lib.tidesdb_promote_to_primary(self._db)
+        if result != TDB_SUCCESS:
+            raise TidesDBError.from_code(result, "failed to promote to primary")
 
     def __enter__(self) -> TidesDB:
         return self
