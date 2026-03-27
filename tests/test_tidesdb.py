@@ -1139,5 +1139,226 @@ class TestDbStats:
         assert stats.compaction_queue_size == 0
 
 
+class TestUnifiedMemtableConfig:
+    """Tests for unified memtable configuration fields."""
+
+    def test_config_defaults(self):
+        """Test unified memtable config defaults."""
+        config = tidesdb.Config(db_path="/tmp/test")
+        assert config.unified_memtable is False
+        assert config.unified_memtable_write_buffer_size == 0
+        assert config.unified_memtable_skip_list_max_level == 0
+        assert config.unified_memtable_skip_list_probability == 0.0
+        assert config.unified_memtable_sync_mode == tidesdb.SyncMode.SYNC_NONE
+        assert config.unified_memtable_sync_interval_us == 0
+
+    def test_open_with_unified_memtable(self, temp_db_path):
+        """Test opening database with unified memtable enabled."""
+        db = tidesdb.TidesDB.open(
+            temp_db_path,
+            unified_memtable=True,
+            unified_memtable_write_buffer_size=32 * 1024 * 1024,
+            unified_memtable_skip_list_max_level=12,
+            unified_memtable_skip_list_probability=0.25,
+        )
+        db.create_column_family("test_cf")
+        cf = db.get_column_family("test_cf")
+
+        with db.begin_txn() as txn:
+            txn.put(cf, b"key1", b"value1")
+            txn.commit()
+
+        with db.begin_txn() as txn:
+            val = txn.get(cf, b"key1")
+            assert val == b"value1"
+
+        db.close()
+
+    def test_open_with_config_object(self, temp_db_path):
+        """Test opening database with Config object containing unified memtable fields."""
+        config = tidesdb.Config(
+            db_path=temp_db_path,
+            unified_memtable=True,
+            unified_memtable_write_buffer_size=16 * 1024 * 1024,
+        )
+        db = tidesdb.TidesDB(config)
+        db.create_column_family("test_cf")
+        cf = db.get_column_family("test_cf")
+
+        with db.begin_txn() as txn:
+            txn.put(cf, b"hello", b"world")
+            txn.commit()
+
+        with db.begin_txn() as txn:
+            assert txn.get(cf, b"hello") == b"world"
+
+        db.close()
+
+
+class TestObjectStoreConfigFields:
+    """Tests for object store fields in ColumnFamilyConfig."""
+
+    def test_cf_config_defaults(self):
+        """Test object store config defaults in ColumnFamilyConfig."""
+        config = tidesdb.ColumnFamilyConfig()
+        assert config.object_target_file_size == 0
+        assert config.object_lazy_compaction is False
+        assert config.object_prefetch_compaction is True
+
+    def test_cf_config_custom_values(self, db):
+        """Test creating column family with object store config fields set."""
+        config = tidesdb.ColumnFamilyConfig(
+            object_target_file_size=128 * 1024 * 1024,
+            object_lazy_compaction=True,
+            object_prefetch_compaction=False,
+        )
+        db.create_column_family("obj_cf", config)
+        cf = db.get_column_family("obj_cf")
+
+        with db.begin_txn() as txn:
+            txn.put(cf, b"key", b"value")
+            txn.commit()
+
+        with db.begin_txn() as txn:
+            assert txn.get(cf, b"key") == b"value"
+
+        db.drop_column_family("obj_cf")
+
+
+class TestDbStatsNewFields:
+    """Tests for new unified memtable and object store fields in DbStats."""
+
+    def test_unified_memtable_stats_fields(self, db):
+        """Test that unified memtable stats fields are present and typed correctly."""
+        stats = db.get_db_stats()
+        assert isinstance(stats.unified_memtable_enabled, bool)
+        assert isinstance(stats.unified_memtable_bytes, int)
+        assert isinstance(stats.unified_immutable_count, int)
+        assert isinstance(stats.unified_is_flushing, bool)
+        assert isinstance(stats.unified_next_cf_index, int)
+        assert isinstance(stats.unified_wal_generation, int)
+
+    def test_object_store_stats_fields(self, db):
+        """Test that object store stats fields are present and typed correctly."""
+        stats = db.get_db_stats()
+        assert isinstance(stats.object_store_enabled, bool)
+        assert isinstance(stats.object_store_connector, str)
+        assert isinstance(stats.local_cache_bytes_used, int)
+        assert isinstance(stats.local_cache_bytes_max, int)
+        assert isinstance(stats.local_cache_num_files, int)
+        assert isinstance(stats.last_uploaded_generation, int)
+        assert isinstance(stats.upload_queue_depth, int)
+        assert isinstance(stats.total_uploads, int)
+        assert isinstance(stats.total_upload_failures, int)
+        assert isinstance(stats.replica_mode, bool)
+
+    def test_unified_memtable_stats_enabled(self, temp_db_path):
+        """Test unified memtable stats when enabled."""
+        db = tidesdb.TidesDB.open(
+            temp_db_path,
+            unified_memtable=True,
+            unified_memtable_write_buffer_size=32 * 1024 * 1024,
+            unified_memtable_skip_list_max_level=12,
+            unified_memtable_skip_list_probability=0.25,
+        )
+        stats = db.get_db_stats()
+        assert stats.unified_memtable_enabled is True
+        db.close()
+
+    def test_object_store_disabled_by_default(self, db):
+        """Test that object store is disabled by default."""
+        stats = db.get_db_stats()
+        assert stats.object_store_enabled is False
+        assert stats.replica_mode is False
+
+
+class TestIteratorKeyValue:
+    """Tests for the combined key_value() iterator method."""
+
+    def test_key_value_basic(self, db, cf):
+        """Test basic key_value() retrieval."""
+        with db.begin_txn() as txn:
+            txn.put(cf, b"a", b"val_a")
+            txn.put(cf, b"b", b"val_b")
+            txn.put(cf, b"c", b"val_c")
+            txn.commit()
+
+        with db.begin_txn() as txn:
+            with txn.new_iterator(cf) as it:
+                it.seek_to_first()
+                assert it.valid()
+                key, value = it.key_value()
+                assert key == b"a"
+                assert value == b"val_a"
+
+    def test_key_value_iteration(self, db, cf):
+        """Test using key_value() in iteration loop."""
+        expected = {}
+        with db.begin_txn() as txn:
+            for i in range(5):
+                k = f"iter_kv_{i:03d}".encode()
+                v = f"value_{i}".encode()
+                expected[k] = v
+                txn.put(cf, k, v)
+            txn.commit()
+
+        with db.begin_txn() as txn:
+            results = {}
+            with txn.new_iterator(cf) as it:
+                it.seek(b"iter_kv_")
+                while it.valid():
+                    key, value = it.key_value()
+                    if not key.startswith(b"iter_kv_"):
+                        break
+                    results[key] = value
+                    it.next()
+
+            assert results == expected
+
+    def test_key_value_via_iter_protocol(self, db, cf):
+        """Test that __next__ uses key_value() internally."""
+        with db.begin_txn() as txn:
+            txn.put(cf, b"x", b"1")
+            txn.put(cf, b"y", b"2")
+            txn.commit()
+
+        with db.begin_txn() as txn:
+            with txn.new_iterator(cf) as it:
+                it.seek_to_first()
+                pairs = list(it)
+                assert len(pairs) >= 2
+                # Verify tuples are returned
+                for k, v in pairs:
+                    assert isinstance(k, bytes)
+                    assert isinstance(v, bytes)
+
+
+class TestPromoteToPrimary:
+    """Tests for promote_to_primary method."""
+
+    def test_promote_to_primary_without_object_store(self, db):
+        """Test promote_to_primary on a non-replica db (should fail gracefully)."""
+        with pytest.raises(tidesdb.TidesDBError):
+            db.promote_to_primary()
+
+    def test_promote_method_exists(self, db):
+        """Test that promote_to_primary method is available."""
+        assert hasattr(db, "promote_to_primary")
+        assert callable(db.promote_to_primary)
+
+
+class TestErrorCodes:
+    """Tests for error codes."""
+
+    def test_readonly_error_code_exists(self):
+        """Test that TDB_ERR_READONLY is defined."""
+        assert tidesdb.TDB_ERR_READONLY == -13
+
+    def test_readonly_error_message(self):
+        """Test that readonly error has proper message."""
+        err = tidesdb.TidesDBError.from_code(tidesdb.TDB_ERR_READONLY)
+        assert "read-only" in str(err)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -29,9 +29,23 @@ from .tidesdb import (
     CommitOp,
     COMPARATOR_FUNC,
     COMMIT_HOOK_FUNC,
+    TDB_SUCCESS,
+    TDB_ERR_MEMORY,
+    TDB_ERR_INVALID_ARGS,
+    TDB_ERR_NOT_FOUND,
+    TDB_ERR_IO,
+    TDB_ERR_CORRUPTION,
+    TDB_ERR_EXISTS,
+    TDB_ERR_CONFLICT,
+    TDB_ERR_TOO_LARGE,
+    TDB_ERR_MEMORY_LIMIT,
+    TDB_ERR_INVALID_DB,
+    TDB_ERR_UNKNOWN,
+    TDB_ERR_LOCKED,
+    TDB_ERR_READONLY,
 )
 
-__version__ = "0.9.6"
+__version__ = "0.9.7"
 __all__ = [
     "TidesDB",
     "Transaction",
@@ -54,4 +68,18 @@ __all__ = [
     "CommitOp",
     "COMPARATOR_FUNC",
     "COMMIT_HOOK_FUNC",
+    "TDB_SUCCESS",
+    "TDB_ERR_MEMORY",
+    "TDB_ERR_INVALID_ARGS",
+    "TDB_ERR_NOT_FOUND",
+    "TDB_ERR_IO",
+    "TDB_ERR_CORRUPTION",
+    "TDB_ERR_EXISTS",
+    "TDB_ERR_CONFLICT",
+    "TDB_ERR_TOO_LARGE",
+    "TDB_ERR_MEMORY_LIMIT",
+    "TDB_ERR_INVALID_DB",
+    "TDB_ERR_UNKNOWN",
+    "TDB_ERR_LOCKED",
+    "TDB_ERR_READONLY",
 ]
