@@ -198,6 +198,47 @@ class TestTransactions:
         txn.commit()
         txn.close()
 
+    def test_single_delete(self, db, cf):
+        """Test single_delete behaves like delete for read semantics."""
+        with db.begin_txn() as txn:
+            txn.put(cf, b"sd_key", b"sd_value")
+            txn.commit()
+
+        with db.begin_txn() as txn:
+            txn.single_delete(cf, b"sd_key")
+            txn.commit()
+
+        with db.begin_txn() as txn:
+            with pytest.raises(tidesdb.TidesDBError):
+                txn.get(cf, b"sd_key")
+
+    def test_single_delete_combined_with_put(self, db, cf):
+        """Test single_delete combined with other ops in the same transaction."""
+        with db.begin_txn() as txn:
+            txn.put(cf, b"sd_a", b"value_a")
+            txn.put(cf, b"sd_b", b"value_b")
+            txn.commit()
+
+        with db.begin_txn() as txn:
+            txn.put(cf, b"sd_c", b"value_c")
+            txn.single_delete(cf, b"sd_a")
+            txn.commit()
+
+        with db.begin_txn() as txn:
+            assert txn.get(cf, b"sd_b") == b"value_b"
+            assert txn.get(cf, b"sd_c") == b"value_c"
+            with pytest.raises(tidesdb.TidesDBError):
+                txn.get(cf, b"sd_a")
+
+    def test_single_delete_after_commit_raises(self, db, cf):
+        """Test that single_delete on a committed transaction raises."""
+        txn = db.begin_txn()
+        txn.put(cf, b"sd_x", b"value_x")
+        txn.commit()
+        with pytest.raises(tidesdb.TidesDBError):
+            txn.single_delete(cf, b"sd_x")
+        txn.close()
+
 
 class TestSavepoints:
     """Tests for savepoint operations."""
@@ -1201,14 +1242,12 @@ class TestObjectStoreConfigFields:
     def test_cf_config_defaults(self):
         """Test object store config defaults in ColumnFamilyConfig."""
         config = tidesdb.ColumnFamilyConfig()
-        assert config.object_target_file_size == 0
         assert config.object_lazy_compaction is False
         assert config.object_prefetch_compaction is True
 
     def test_cf_config_custom_values(self, db):
         """Test creating column family with object store config fields set."""
         config = tidesdb.ColumnFamilyConfig(
-            object_target_file_size=128 * 1024 * 1024,
             object_lazy_compaction=True,
             object_prefetch_compaction=False,
         )

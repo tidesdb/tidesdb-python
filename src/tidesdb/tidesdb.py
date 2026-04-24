@@ -212,7 +212,7 @@ class _CColumnFamilyConfig(Structure):
         ("use_btree", c_int),
         ("commit_hook_fn", c_void_p),
         ("commit_hook_ctx", c_void_p),
-        ("object_target_file_size", c_size_t),
+        ("_object_target_file_size_reserved", c_size_t),
         ("object_lazy_compaction", c_int),
         ("object_prefetch_compaction", c_int),
     ]
@@ -410,6 +410,9 @@ _lib.tidesdb_txn_get.restype = c_int
 
 _lib.tidesdb_txn_delete.argtypes = [c_void_p, c_void_p, POINTER(c_uint8), c_size_t]
 _lib.tidesdb_txn_delete.restype = c_int
+
+_lib.tidesdb_txn_single_delete.argtypes = [c_void_p, c_void_p, POINTER(c_uint8), c_size_t]
+_lib.tidesdb_txn_single_delete.restype = c_int
 
 _lib.tidesdb_txn_commit.argtypes = [c_void_p]
 _lib.tidesdb_txn_commit.restype = c_int
@@ -657,7 +660,6 @@ class ColumnFamilyConfig:
     l1_file_count_trigger: int = 4
     l0_queue_stall_threshold: int = 20
     use_btree: bool = False
-    object_target_file_size: int = 0
     object_lazy_compaction: bool = False
     object_prefetch_compaction: bool = True
 
@@ -690,7 +692,6 @@ class ColumnFamilyConfig:
         c_config.l1_file_count_trigger = self.l1_file_count_trigger
         c_config.l0_queue_stall_threshold = self.l0_queue_stall_threshold
         c_config.use_btree = 1 if self.use_btree else 0
-        c_config.object_target_file_size = self.object_target_file_size
         c_config.object_lazy_compaction = 1 if self.object_lazy_compaction else 0
         c_config.object_prefetch_compaction = 1 if self.object_prefetch_compaction else 0
 
@@ -864,7 +865,6 @@ def default_column_family_config() -> ColumnFamilyConfig:
         l1_file_count_trigger=c_config.l1_file_count_trigger,
         l0_queue_stall_threshold=c_config.l0_queue_stall_threshold,
         use_btree=bool(c_config.use_btree),
-        object_target_file_size=c_config.object_target_file_size,
         object_lazy_compaction=bool(c_config.object_lazy_compaction),
         object_prefetch_compaction=bool(c_config.object_prefetch_compaction),
     )
@@ -927,7 +927,6 @@ def load_config_from_ini(file_path: str, cf_name: str) -> ColumnFamilyConfig:
         l1_file_count_trigger=c_config.l1_file_count_trigger,
         l0_queue_stall_threshold=c_config.l0_queue_stall_threshold,
         use_btree=bool(c_config.use_btree),
-        object_target_file_size=c_config.object_target_file_size,
         object_lazy_compaction=bool(c_config.object_lazy_compaction),
         object_prefetch_compaction=bool(c_config.object_prefetch_compaction),
     )
@@ -1304,7 +1303,6 @@ class ColumnFamily:
                 l1_file_count_trigger=c_cfg.l1_file_count_trigger,
                 l0_queue_stall_threshold=c_cfg.l0_queue_stall_threshold,
                 use_btree=bool(c_cfg.use_btree),
-                object_target_file_size=c_cfg.object_target_file_size,
                 object_lazy_compaction=bool(c_cfg.object_lazy_compaction),
                 object_prefetch_compaction=bool(c_cfg.object_prefetch_compaction),
             )
@@ -1423,6 +1421,36 @@ class Transaction:
 
         if result != TDB_SUCCESS:
             raise TidesDBError.from_code(result, "failed to delete key")
+
+    def single_delete(self, cf: ColumnFamily, key: bytes) -> None:
+        """
+        Write a tombstone carrying a caller-provided promise that the key has been
+        put at most once since its previous single-delete (or since the start of
+        history). This lets compaction drop the put and the tombstone together as
+        soon as both appear in the same merge input, rather than carrying the
+        tombstone forward to the largest active level. Read semantics match delete().
+
+        The engine does not verify the promise at runtime; violating it can leave
+        older puts visible and is a bug in the caller. Use only for insert-once-
+        then-delete patterns (classic insert benchmarks, secondary indexes on
+        never-updated columns, log tables with scheduled purges). Not safe for
+        repeated updates to the same key. When in doubt, prefer delete().
+
+        Args:
+            cf: Column family handle
+            key: Key as bytes
+        """
+        if self._closed:
+            raise TidesDBError("Transaction is closed")
+        if self._committed:
+            raise TidesDBError("Transaction already committed")
+
+        key_buf = (c_uint8 * len(key)).from_buffer_copy(key) if key else None
+
+        result = _lib.tidesdb_txn_single_delete(self._txn, cf._cf, key_buf, len(key))
+
+        if result != TDB_SUCCESS:
+            raise TidesDBError.from_code(result, "failed to single-delete key")
 
     def commit(self) -> None:
         """Commit the transaction."""
