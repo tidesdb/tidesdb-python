@@ -1514,5 +1514,163 @@ class TestErrorCodes:
         assert "read-only" in str(err)
 
 
+class TestTombstoneConfig:
+    """Tests for the new tombstone density CF config fields."""
+
+    def test_defaults_are_sensible(self):
+        """Default tombstone fields should mirror the C library defaults."""
+        cfg = tidesdb.default_column_family_config()
+        # Trigger is 0.0 (disabled) by default; min_entries should be ~1024.
+        assert cfg.tombstone_density_trigger == 0.0
+        assert cfg.tombstone_density_min_entries == 1024
+
+    def test_roundtrip_through_get_stats(self, db):
+        """Custom tombstone settings must round-trip via get_stats().config."""
+        cfg = tidesdb.default_column_family_config()
+        cfg.tombstone_density_trigger = 0.5
+        cfg.tombstone_density_min_entries = 256
+        db.create_column_family("tomb_cf", cfg)
+        try:
+            cf = db.get_column_family("tomb_cf")
+            stats = cf.get_stats()
+            assert stats.config is not None
+            assert stats.config.tombstone_density_trigger == 0.5
+            assert stats.config.tombstone_density_min_entries == 256
+        finally:
+            try:
+                db.drop_column_family("tomb_cf")
+            except tidesdb.TidesDBError:
+                pass
+
+    def test_ini_roundtrip(self, temp_db_path):
+        """Tombstone settings must round-trip through INI save/load."""
+        original = tidesdb.default_column_family_config()
+        original.tombstone_density_trigger = 0.75
+        original.tombstone_density_min_entries = 2048
+
+        ini_path = os.path.join(temp_db_path, "tomb.ini")
+        tidesdb.save_config_to_ini(ini_path, "tomb_cf", original)
+        loaded = tidesdb.load_config_from_ini(ini_path, "tomb_cf")
+        assert loaded.tombstone_density_trigger == 0.75
+        assert loaded.tombstone_density_min_entries == 2048
+
+
+class TestTombstoneStats:
+    """Tests for the new tombstone fields on Stats."""
+
+    def test_tombstone_stats_populated(self, db, cf):
+        """After flushing some deletes, tombstone stats should be sensible."""
+        n = 200
+        with db.begin_txn() as txn:
+            for i in range(n):
+                txn.put(cf, f"k{i:04d}".encode(), f"v{i}".encode())
+            txn.commit()
+
+        cf.flush_memtable()
+        time.sleep(0.5)
+
+        with db.begin_txn() as txn:
+            for i in range(n // 2):
+                txn.delete(cf, f"k{i:04d}".encode())
+            txn.commit()
+
+        cf.flush_memtable()
+        time.sleep(0.5)
+
+        stats = cf.get_stats()
+        assert stats.total_tombstones >= 0
+        assert 0.0 <= stats.tombstone_ratio <= 1.0
+        assert 0.0 <= stats.max_sst_density <= 1.0
+        assert isinstance(stats.max_sst_density_level, int)
+        assert stats.level_tombstone_counts is not None
+        assert len(stats.level_tombstone_counts) == stats.num_levels
+
+    def test_tombstone_stats_defaults_on_empty_cf(self, db, cf):
+        """Empty CF should report zero tombstones and a [0,1] ratio."""
+        stats = cf.get_stats()
+        assert stats.total_tombstones == 0
+        assert stats.tombstone_ratio == 0.0
+        assert stats.max_sst_density == 0.0
+        assert stats.max_sst_density_level == 0
+        assert stats.level_tombstone_counts is not None
+        assert len(stats.level_tombstone_counts) == stats.num_levels
+
+
+class TestCompactRange:
+    """Tests for ColumnFamily.compact_range."""
+
+    def test_compact_range_narrow(self, db, cf):
+        """compact_range over a narrow range should succeed and not affect outside data."""
+        for batch in range(3):
+            with db.begin_txn() as txn:
+                for i in range(50):
+                    key = f"key:{batch:02d}:{i:04d}".encode()
+                    txn.put(cf, key, b"v" * 32)
+                txn.commit()
+            cf.flush_memtable()
+            time.sleep(0.3)
+
+        cf.compact_range(b"key:01:0010", b"key:01:0020")
+
+        with db.begin_txn() as txn:
+            assert txn.get(cf, b"key:00:0005") == b"v" * 32
+            assert txn.get(cf, b"key:02:0049") == b"v" * 32
+
+    def test_compact_range_unbounded_start(self, db, cf):
+        """None start means unbounded on the lower side."""
+        with db.begin_txn() as txn:
+            for i in range(20):
+                txn.put(cf, f"k{i:03d}".encode(), b"value")
+            txn.commit()
+        cf.flush_memtable()
+        time.sleep(0.3)
+
+        cf.compact_range(None, b"k010")
+
+        with db.begin_txn() as txn:
+            assert txn.get(cf, b"k015") == b"value"
+
+    def test_compact_range_both_unbounded_rejected(self, db, cf):
+        """Both endpoints unbounded must raise INVALID_ARGS."""
+        with pytest.raises(tidesdb.TidesDBError) as excinfo:
+            cf.compact_range(None, None)
+        assert excinfo.value.code == tidesdb.TDB_ERR_INVALID_ARGS
+
+    def test_compact_range_both_empty_rejected(self, db, cf):
+        """Both empty-byte endpoints must raise INVALID_ARGS."""
+        with pytest.raises(tidesdb.TidesDBError) as excinfo:
+            cf.compact_range(b"", b"")
+        assert excinfo.value.code == tidesdb.TDB_ERR_INVALID_ARGS
+
+
+class TestMaxConcurrentFlushes:
+    """Tests for the new DB-level max_concurrent_flushes config."""
+
+    def test_default_is_nonzero(self):
+        """default_config() must mirror the C library default (non-zero)."""
+        cfg = tidesdb.default_config()
+        assert cfg.max_concurrent_flushes != 0
+
+    def test_open_with_explicit_value(self, temp_db_path):
+        """Opening with max_concurrent_flushes=1 should succeed and allow normal writes."""
+        cfg = tidesdb.default_config()
+        cfg.db_path = temp_db_path
+        cfg.max_concurrent_flushes = 1
+
+        db = tidesdb.TidesDB(cfg)
+        try:
+            db.create_column_family("flush_cf")
+            cf = db.get_column_family("flush_cf")
+            with db.begin_txn() as txn:
+                txn.put(cf, b"k", b"v")
+                txn.commit()
+            cf.flush_memtable()
+            time.sleep(0.3)
+            with db.begin_txn() as txn:
+                assert txn.get(cf, b"k") == b"v"
+        finally:
+            db.close()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
