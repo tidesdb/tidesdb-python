@@ -97,6 +97,7 @@ TDB_ERR_INVALID_DB = -10
 TDB_ERR_UNKNOWN = -11
 TDB_ERR_LOCKED = -12
 TDB_ERR_READONLY = -13
+TDB_ERR_BUSY = -14
 
 
 class CompressionAlgorithm(IntEnum):
@@ -170,6 +171,7 @@ class TidesDBError(Exception):
             TDB_ERR_UNKNOWN: "unknown error",
             TDB_ERR_LOCKED: "database is locked",
             TDB_ERR_READONLY: "database is read-only",
+            TDB_ERR_BUSY: "resource busy",
         }
 
         msg = error_messages.get(code, "unknown error")
@@ -260,6 +262,25 @@ class _CObjStoreConfig(Structure):
     ]
 
 
+class _CS3Config(Structure):
+    """C structure for tidesdb_objstore_s3_config_t."""
+
+    _fields_ = [
+        ("endpoint", c_char_p),
+        ("bucket", c_char_p),
+        ("prefix", c_char_p),
+        ("access_key", c_char_p),
+        ("secret_key", c_char_p),
+        ("region", c_char_p),
+        ("use_ssl", c_int),
+        ("use_path_style", c_int),
+        ("tls_ca_path", c_char_p),
+        ("tls_insecure_skip_verify", c_int),
+        ("multipart_threshold", c_size_t),
+        ("multipart_part_size", c_size_t),
+    ]
+
+
 class _CConfig(Structure):
     """C structure for tidesdb_config_t."""
 
@@ -282,6 +303,7 @@ class _CConfig(Structure):
         ("object_store", c_void_p),
         ("object_store_config", c_void_p),
         ("max_concurrent_flushes", c_int),
+        ("finish_compactions_on_close", c_int),
     ]
 
 
@@ -310,6 +332,13 @@ class _CStats(Structure):
         ("level_tombstone_counts", POINTER(c_uint64)),
         ("max_sst_density", c_double),
         ("max_sst_density_level", c_int),
+        ("wal_bytes_written", c_uint64),
+        ("flush_bytes_written", c_uint64),
+        ("compaction_bytes_written", c_uint64),
+        ("compaction_bytes_read", c_uint64),
+        ("user_bytes_written", c_uint64),
+        ("flush_count", c_uint64),
+        ("compaction_count", c_uint64),
     ]
 
 
@@ -362,6 +391,14 @@ class _CDbStats(Structure):
         ("total_uploads", c_uint64),
         ("total_upload_failures", c_uint64),
         ("replica_mode", c_int),
+        ("uwal_bytes_written", c_uint64),
+        ("wal_bytes_written", c_uint64),
+        ("flush_bytes_written", c_uint64),
+        ("compaction_bytes_written", c_uint64),
+        ("compaction_bytes_read", c_uint64),
+        ("user_bytes_written", c_uint64),
+        ("flush_count", c_uint64),
+        ("compaction_count", c_uint64),
     ]
 
 
@@ -577,6 +614,30 @@ _lib.tidesdb_get_db_stats.restype = c_int
 _lib.tidesdb_promote_to_primary.argtypes = [c_void_p]
 _lib.tidesdb_promote_to_primary.restype = c_int
 
+_lib.tidesdb_cancel_background_work.argtypes = [c_void_p]
+_lib.tidesdb_cancel_background_work.restype = c_int
+
+_lib.tidesdb_raise_open_file_limit.argtypes = [ctypes.c_long]
+_lib.tidesdb_raise_open_file_limit.restype = ctypes.c_long
+
+_lib.tidesdb_compression_available.argtypes = [c_int]
+_lib.tidesdb_compression_available.restype = c_int
+
+_lib.tidesdb_free.argtypes = [c_void_p]
+_lib.tidesdb_free.restype = None
+
+# Custom allocator function pointer types for tidesdb_init.
+MALLOC_FUNC = CFUNCTYPE(c_void_p, c_size_t)
+CALLOC_FUNC = CFUNCTYPE(c_void_p, c_size_t, c_size_t)
+REALLOC_FUNC = CFUNCTYPE(c_void_p, c_void_p, c_size_t)
+FREE_FUNC = CFUNCTYPE(None, c_void_p)
+
+_lib.tidesdb_init.argtypes = [MALLOC_FUNC, CALLOC_FUNC, REALLOC_FUNC, FREE_FUNC]
+_lib.tidesdb_init.restype = c_int
+
+_lib.tidesdb_finalize.argtypes = []
+_lib.tidesdb_finalize.restype = None
+
 _lib.tidesdb_objstore_default_config.argtypes = []
 _lib.tidesdb_objstore_default_config.restype = _CObjStoreConfig
 
@@ -651,6 +712,7 @@ class Config:
     object_store: c_void_p | None = None
     object_store_config: ObjStoreConfig | None = None
     max_concurrent_flushes: int = 0
+    finish_compactions_on_close: bool = False
 
 
 @dataclass
@@ -748,6 +810,13 @@ class Stats:
     level_tombstone_counts: list[int] | None = None
     max_sst_density: float = 0.0
     max_sst_density_level: int = 0
+    wal_bytes_written: int = 0
+    flush_bytes_written: int = 0
+    compaction_bytes_written: int = 0
+    compaction_bytes_read: int = 0
+    user_bytes_written: int = 0
+    flush_count: int = 0
+    compaction_count: int = 0
     config: ColumnFamilyConfig | None = None
 
 
@@ -799,6 +868,14 @@ class DbStats:
     total_uploads: int = 0
     total_upload_failures: int = 0
     replica_mode: bool = False
+    uwal_bytes_written: int = 0
+    wal_bytes_written: int = 0
+    flush_bytes_written: int = 0
+    compaction_bytes_written: int = 0
+    compaction_bytes_read: int = 0
+    user_bytes_written: int = 0
+    flush_count: int = 0
+    compaction_count: int = 0
 
 
 @dataclass
@@ -831,6 +908,7 @@ def default_config() -> Config:
         unified_memtable_sync_mode=SyncMode(c_cfg.unified_memtable_sync_mode),
         unified_memtable_sync_interval_us=c_cfg.unified_memtable_sync_interval_us,
         max_concurrent_flushes=c_cfg.max_concurrent_flushes,
+        finish_compactions_on_close=bool(c_cfg.finish_compactions_on_close),
     )
 
 
@@ -883,6 +961,228 @@ def objstore_fs_create(root_dir: str) -> c_void_p:
     if not handle:
         raise TidesDBError("failed to create filesystem object store connector", TDB_ERR_IO)
     return handle
+
+
+def _encode_optional(value: str | None) -> bytes | None:
+    return value.encode("utf-8") if value is not None else None
+
+
+def _bind_s3(symbol: str):
+    """
+    Resolve an S3 connector symbol lazily.
+
+    The S3 backend is an optional, build-time feature (TIDESDB_WITH_S3=ON). When
+    the library is built without it the symbol is absent, so it is resolved on
+    first use rather than at import time -- otherwise importing this module would
+    fail on every non-S3 build.
+    """
+    try:
+        return getattr(_lib, symbol)
+    except AttributeError as exc:
+        raise TidesDBError(
+            "this build of the TidesDB library was compiled without S3 support "
+            "(rebuild with -DTIDESDB_WITH_S3=ON)",
+            TDB_ERR_INVALID_ARGS,
+        ) from exc
+
+
+def objstore_s3_create(
+    endpoint: str,
+    bucket: str,
+    access_key: str,
+    secret_key: str,
+    prefix: str | None = None,
+    region: str | None = None,
+    use_ssl: bool = True,
+    use_path_style: bool = False,
+) -> c_void_p:
+    """
+    Create an S3-compatible object store connector (AWS S3, MinIO, etc.).
+
+    The library must have been built with S3 support; otherwise a TidesDBError
+    is raised explaining how to rebuild.
+
+    Args:
+        endpoint: S3 endpoint (e.g. "s3.amazonaws.com" or "minio.local:9000").
+        bucket: Bucket name.
+        access_key: AWS access key ID.
+        secret_key: AWS secret access key.
+        prefix: Key prefix (e.g. "production/db1/"), or None.
+        region: AWS region (e.g. "us-east-1"), or None for MinIO.
+        use_ssl: True for HTTPS, False for HTTP.
+        use_path_style: True for path-style URLs (MinIO), False for
+            virtual-hosted (AWS).
+
+    Returns:
+        Opaque object store handle for use in Config.object_store.
+
+    Raises:
+        TidesDBError: If S3 support is not compiled in, or creation fails.
+    """
+    fn = _bind_s3("tidesdb_objstore_s3_create")
+    fn.argtypes = [
+        c_char_p,
+        c_char_p,
+        c_char_p,
+        c_char_p,
+        c_char_p,
+        c_char_p,
+        c_int,
+        c_int,
+    ]
+    fn.restype = c_void_p
+    handle = fn(
+        endpoint.encode("utf-8"),
+        bucket.encode("utf-8"),
+        _encode_optional(prefix),
+        access_key.encode("utf-8"),
+        secret_key.encode("utf-8"),
+        _encode_optional(region),
+        1 if use_ssl else 0,
+        1 if use_path_style else 0,
+    )
+    if not handle:
+        raise TidesDBError("failed to create S3 object store connector", TDB_ERR_IO)
+    return handle
+
+
+def objstore_s3_create_config(
+    endpoint: str,
+    bucket: str,
+    access_key: str,
+    secret_key: str,
+    prefix: str | None = None,
+    region: str | None = None,
+    use_ssl: bool = True,
+    use_path_style: bool = False,
+    tls_ca_path: str | None = None,
+    tls_insecure_skip_verify: bool = False,
+    multipart_threshold: int = 0,
+    multipart_part_size: int = 0,
+) -> c_void_p:
+    """
+    Create an S3-compatible connector from a full configuration (TLS + multipart).
+
+    This is the richer counterpart to objstore_s3_create(), exposing TLS and
+    multipart tuning. All-default arguments are secure (TLS verification on) and
+    use the library's built-in multipart sizes.
+
+    Args:
+        endpoint: S3 endpoint (required).
+        bucket: Bucket name (required).
+        access_key: AWS access key ID (required).
+        secret_key: AWS secret access key (required).
+        prefix: Key prefix, or None.
+        region: AWS region, or None for the default.
+        use_ssl: True for HTTPS, False for HTTP.
+        use_path_style: True for path-style URLs (MinIO), False for AWS.
+        tls_ca_path: Custom CA bundle file path, or None for the system bundle.
+        tls_insecure_skip_verify: True disables TLS peer/host verification
+            (test only, insecure); False (default) keeps verification on.
+        multipart_threshold: Object size at/above which multipart upload is used;
+            0 means use the library default.
+        multipart_part_size: Multipart chunk size in bytes; 0 means use the
+            library default.
+
+    Returns:
+        Opaque object store handle for use in Config.object_store.
+
+    Raises:
+        TidesDBError: If S3 support is not compiled in, or creation fails.
+    """
+    fn = _bind_s3("tidesdb_objstore_s3_create_config")
+    fn.argtypes = [POINTER(_CS3Config)]
+    fn.restype = c_void_p
+
+    c_cfg = _CS3Config(
+        endpoint=endpoint.encode("utf-8"),
+        bucket=bucket.encode("utf-8"),
+        prefix=_encode_optional(prefix),
+        access_key=access_key.encode("utf-8"),
+        secret_key=secret_key.encode("utf-8"),
+        region=_encode_optional(region),
+        use_ssl=1 if use_ssl else 0,
+        use_path_style=1 if use_path_style else 0,
+        tls_ca_path=_encode_optional(tls_ca_path),
+        tls_insecure_skip_verify=1 if tls_insecure_skip_verify else 0,
+        multipart_threshold=multipart_threshold,
+        multipart_part_size=multipart_part_size,
+    )
+    handle = fn(ctypes.byref(c_cfg))
+    if not handle:
+        raise TidesDBError("failed to create S3 object store connector", TDB_ERR_IO)
+    return handle
+
+
+def init() -> None:
+    """
+    Initialize TidesDB with the default system allocator.
+
+    Calling this is optional: TidesDB lazily initializes itself on first use.
+    It exists so an embedder can deterministically initialize the library up
+    front. It is safe to call more than once; subsequent calls are a no-op
+    while the library is already initialized.
+
+    Note:
+        Custom allocator functions are intentionally not exposed through the
+        Python binding because the lifetime of Python-side callbacks cannot be
+        safely guaranteed for the entire life of the process. The default
+        system allocator is always used.
+    """
+    _lib.tidesdb_init(
+        ctypes.cast(None, MALLOC_FUNC),
+        ctypes.cast(None, CALLOC_FUNC),
+        ctypes.cast(None, REALLOC_FUNC),
+        ctypes.cast(None, FREE_FUNC),
+    )
+
+
+def finalize() -> None:
+    """
+    Finalize TidesDB and reset the allocator.
+
+    Should be called only after all TidesDB operations are complete and every
+    database handle has been closed. After calling this, init() (or any other
+    TidesDB call, which re-initializes lazily) can be used again.
+    """
+    _lib.tidesdb_finalize()
+
+
+def raise_open_file_limit(desired: int) -> int:
+    """
+    Raise this process's open-file ceiling toward ``desired`` descriptors so a
+    database can keep more SSTables open.
+
+    The engine sizes ``max_open_sstables`` to fit this at open time, so call it
+    BEFORE opening a database. This is an explicit, opt-in operator action;
+    TidesDB never raises the limit itself. A failed or partial raise is
+    non-fatal.
+
+    Args:
+        desired: Target descriptor count; <= 0 just reports the current ceiling.
+
+    Returns:
+        The open-file ceiling in effect after the attempt.
+    """
+    return int(_lib.tidesdb_raise_open_file_limit(desired))
+
+
+def compression_available(algorithm: CompressionAlgorithm) -> bool:
+    """
+    Report whether a compression backend is compiled into this build of the
+    TidesDB library.
+
+    ``CompressionAlgorithm.NO_COMPRESSION`` is always available; the others
+    depend on the build flags. Lets callers reject an unsupported algorithm up
+    front instead of failing at compress/flush time.
+
+    Args:
+        algorithm: The compression algorithm to query.
+
+    Returns:
+        True if the algorithm can be used in this build, False otherwise.
+    """
+    return bool(_lib.tidesdb_compression_available(int(algorithm)))
 
 
 def default_column_family_config() -> ColumnFamilyConfig:
@@ -1419,6 +1719,13 @@ class ColumnFamily:
             level_tombstone_counts=level_tombstone_counts,
             max_sst_density=c_stats.max_sst_density,
             max_sst_density_level=c_stats.max_sst_density_level,
+            wal_bytes_written=c_stats.wal_bytes_written,
+            flush_bytes_written=c_stats.flush_bytes_written,
+            compaction_bytes_written=c_stats.compaction_bytes_written,
+            compaction_bytes_read=c_stats.compaction_bytes_read,
+            user_bytes_written=c_stats.user_bytes_written,
+            flush_count=c_stats.flush_count,
+            compaction_count=c_stats.compaction_count,
             config=config,
         )
 
@@ -1490,11 +1797,10 @@ class Transaction:
 
         value = ctypes.string_at(value_ptr, value_size.value)
 
-        if sys.platform == "win32":
-            libc = ctypes.CDLL("msvcrt")
-        else:
-            libc = ctypes.CDLL(None)
-        libc.free(ctypes.cast(value_ptr, c_void_p))
+        # The value buffer is allocated by TidesDB's own allocator, so it must be
+        # released through tidesdb_free rather than libc.free to stay correct when
+        # a custom allocator is configured.
+        _lib.tidesdb_free(ctypes.cast(value_ptr, c_void_p))
 
         return value
 
@@ -1721,6 +2027,7 @@ class TidesDB:
             object_store=obj_store_ptr,
             object_store_config=obj_store_config_ptr,
             max_concurrent_flushes=config.max_concurrent_flushes,
+            finish_compactions_on_close=1 if config.finish_compactions_on_close else 0,
         )
 
         db_ptr = c_void_p()
@@ -1752,6 +2059,7 @@ class TidesDB:
         object_store: c_void_p | None = None,
         object_store_config: ObjStoreConfig | None = None,
         max_concurrent_flushes: int = 0,
+        finish_compactions_on_close: bool = False,
     ) -> TidesDB:
         """
         Convenience method to open a database with individual parameters.
@@ -1776,6 +2084,9 @@ class TidesDB:
             object_store_config: Object store behavior configuration
             max_concurrent_flushes: Global semaphore on in-flight memtable flushes
                 across all column families (0 = library default)
+            finish_compactions_on_close: If True, in-flight compactions run to
+                completion before close() returns; if False (default), they are
+                cancelled at their next checkpoint for a fast shutdown (no data loss)
 
         Returns:
             TidesDB instance
@@ -1799,6 +2110,7 @@ class TidesDB:
             object_store=object_store,
             object_store_config=object_store_config,
             max_concurrent_flushes=max_concurrent_flushes,
+            finish_compactions_on_close=finish_compactions_on_close,
         )
         return cls(config)
 
@@ -1895,18 +2207,8 @@ class TidesDB:
 
         names = []
 
-        try:
-            if sys.platform == "win32":
-                libc = ctypes.CDLL("msvcrt")
-            elif sys.platform == "darwin":
-                libc = ctypes.CDLL("libc.dylib")
-            else:
-                libc = ctypes.CDLL("libc.so.6")
-            libc.free.argtypes = [c_void_p]
-            libc.free.restype = None
-        except OSError:
-            libc = None
-
+        # Both the array and each name string are allocated by TidesDB's
+        # allocator, so they are released through tidesdb_free.
         raw_array = ctypes.cast(names_ptr, POINTER(c_void_p))
 
         for i in range(count.value):
@@ -1914,11 +2216,9 @@ class TidesDB:
             if str_ptr:
                 char_ptr = ctypes.cast(str_ptr, c_char_p)
                 names.append(char_ptr.value.decode("utf-8"))
-                if libc:
-                    libc.free(str_ptr)
+                _lib.tidesdb_free(str_ptr)
 
-        if libc:
-            libc.free(ctypes.cast(names_ptr, c_void_p))
+        _lib.tidesdb_free(ctypes.cast(names_ptr, c_void_p))
 
         return names
 
@@ -2241,6 +2541,14 @@ class TidesDB:
             total_uploads=c_stats.total_uploads,
             total_upload_failures=c_stats.total_upload_failures,
             replica_mode=bool(c_stats.replica_mode),
+            uwal_bytes_written=c_stats.uwal_bytes_written,
+            wal_bytes_written=c_stats.wal_bytes_written,
+            flush_bytes_written=c_stats.flush_bytes_written,
+            compaction_bytes_written=c_stats.compaction_bytes_written,
+            compaction_bytes_read=c_stats.compaction_bytes_read,
+            user_bytes_written=c_stats.user_bytes_written,
+            flush_count=c_stats.flush_count,
+            compaction_count=c_stats.compaction_count,
         )
 
     def promote_to_primary(self) -> None:
@@ -2259,6 +2567,29 @@ class TidesDB:
         result = _lib.tidesdb_promote_to_primary(self._db)
         if result != TDB_SUCCESS:
             raise TidesDBError.from_code(result, "failed to promote to primary")
+
+    def cancel_background_work(self) -> None:
+        """
+        Cancel background compaction database-wide for a fast shutdown.
+
+        In-flight merges bail out safely (their uncommitted output is discarded,
+        inputs are left intact, so no data is lost) and queued compaction is
+        skipped. Flushes are unaffected, so durability is preserved. This call
+        blocks (bounded) until compaction is idle.
+
+        The cancellation is sticky for the session and is reset on the next
+        open(). It is intended to be called right before close() to speed up
+        shutdown on databases with heavy compaction backlogs.
+
+        Raises:
+            TidesDBError: If the database handle is invalid.
+        """
+        if self._closed:
+            raise TidesDBError("Database is closed")
+
+        result = _lib.tidesdb_cancel_background_work(self._db)
+        if result != TDB_SUCCESS:
+            raise TidesDBError.from_code(result, "failed to cancel background work")
 
     def __enter__(self) -> TidesDB:
         return self

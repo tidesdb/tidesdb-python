@@ -28,8 +28,14 @@ from .tidesdb import (
     default_column_family_config,
     objstore_default_config,
     objstore_fs_create,
+    objstore_s3_create,
+    objstore_s3_create_config,
     save_config_to_ini,
     load_config_from_ini,
+    init,
+    finalize,
+    raise_open_file_limit,
+    compression_available,
     CommitOp,
     COMPARATOR_FUNC,
     COMMIT_HOOK_FUNC,
@@ -47,9 +53,10 @@ from .tidesdb import (
     TDB_ERR_UNKNOWN,
     TDB_ERR_LOCKED,
     TDB_ERR_READONLY,
+    TDB_ERR_BUSY,
 )
 
-__version__ = "0.11.0"
+__version__ = "0.11.1"
 __all__ = [
     "TidesDB",
     "Transaction",
@@ -71,8 +78,14 @@ __all__ = [
     "default_column_family_config",
     "objstore_default_config",
     "objstore_fs_create",
+    "objstore_s3_create",
+    "objstore_s3_create_config",
     "save_config_to_ini",
     "load_config_from_ini",
+    "init",
+    "finalize",
+    "raise_open_file_limit",
+    "compression_available",
     "CommitOp",
     "COMPARATOR_FUNC",
     "COMMIT_HOOK_FUNC",
@@ -90,4 +103,5 @@ __all__ = [
     "TDB_ERR_UNKNOWN",
     "TDB_ERR_LOCKED",
     "TDB_ERR_READONLY",
+    "TDB_ERR_BUSY",
 ]
