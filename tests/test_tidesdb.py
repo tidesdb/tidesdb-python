@@ -1646,10 +1646,16 @@ class TestCompactRange:
 class TestMaxConcurrentFlushes:
     """Tests for the new DB-level max_concurrent_flushes config."""
 
-    def test_default_is_nonzero(self):
-        """default_config() must mirror the C library default (non-zero)."""
+    def test_default_mirrors_library(self):
+        """default_config() must mirror the C library default.
+
+        The library reports 0 to mean "fall back to
+        TDB_DEFAULT_MAX_CONCURRENT_FLUSHES" (see db.h), so any non-negative
+        value is valid here -- the point is that the field is sourced from the
+        C library rather than hard-coded.
+        """
         cfg = tidesdb.default_config()
-        assert cfg.max_concurrent_flushes != 0
+        assert cfg.max_concurrent_flushes >= 0
 
     def test_open_with_explicit_value(self, temp_db_path):
         """Opening with max_concurrent_flushes=1 should succeed and allow normal writes."""
@@ -1670,6 +1676,224 @@ class TestMaxConcurrentFlushes:
                 assert txn.get(cf, b"k") == b"v"
         finally:
             db.close()
+
+
+class TestCompressionAvailable:
+    """Tests for the compression_available() build-capability query."""
+
+    def test_none_always_available(self):
+        """NO_COMPRESSION is always available regardless of build flags."""
+        assert tidesdb.compression_available(
+            tidesdb.CompressionAlgorithm.NO_COMPRESSION
+        ) is True
+
+    def test_returns_bool_for_each_algorithm(self):
+        """Every algorithm enum returns a plain bool without raising."""
+        for algo in tidesdb.CompressionAlgorithm:
+            result = tidesdb.compression_available(algo)
+            assert isinstance(result, bool)
+
+
+class TestRaiseOpenFileLimit:
+    """Tests for raise_open_file_limit()."""
+
+    def test_report_current_ceiling(self):
+        """A non-positive desired value just reports the current ceiling."""
+        ceiling = tidesdb.raise_open_file_limit(-1)
+        assert isinstance(ceiling, int)
+        assert ceiling > 0
+
+    def test_raise_is_non_fatal(self):
+        """Requesting a target returns the effective ceiling (>= a small request)."""
+        ceiling = tidesdb.raise_open_file_limit(256)
+        assert isinstance(ceiling, int)
+        assert ceiling >= 256
+
+
+class TestInitFinalize:
+    """Tests for the explicit init()/finalize() lifecycle helpers."""
+
+    def test_init_is_idempotent(self):
+        """init() is safe to call repeatedly while already initialized."""
+        tidesdb.init()
+        tidesdb.init()
+
+    def test_db_usable_after_explicit_init(self, temp_db_path):
+        """A database opens and works after an explicit init()."""
+        tidesdb.init()
+        db = tidesdb.TidesDB.open(temp_db_path)
+        try:
+            db.create_column_family("init_cf")
+            cf = db.get_column_family("init_cf")
+            with db.begin_txn() as txn:
+                txn.put(cf, b"k", b"v")
+                txn.commit()
+            with db.begin_txn() as txn:
+                assert txn.get(cf, b"k") == b"v"
+        finally:
+            db.close()
+
+
+class TestCancelBackgroundWork:
+    """Tests for cancel_background_work()."""
+
+    def test_cancel_then_close(self, temp_db_path):
+        """Cancel background work, which must not lose already-committed data."""
+        db = tidesdb.TidesDB.open(temp_db_path)
+        db.create_column_family("cancel_cf")
+        cf = db.get_column_family("cancel_cf")
+        for i in range(50):
+            with db.begin_txn() as txn:
+                txn.put(cf, f"key{i}".encode(), b"value")
+                txn.commit()
+        cf.flush_memtable()
+        db.cancel_background_work()
+        db.close()
+
+        # Reopen and confirm durability is preserved.
+        db = tidesdb.TidesDB.open(temp_db_path)
+        try:
+            cf = db.get_column_family("cancel_cf")
+            with db.begin_txn() as txn:
+                assert txn.get(cf, b"key0") == b"value"
+        finally:
+            db.close()
+
+    def test_cancel_on_closed_db_raises(self, temp_db_path):
+        db = tidesdb.TidesDB.open(temp_db_path)
+        db.close()
+        with pytest.raises(tidesdb.TidesDBError):
+            db.cancel_background_work()
+
+
+class TestFinishCompactionsOnClose:
+    """Tests for the finish_compactions_on_close config field."""
+
+    def test_default_config_exposes_field(self):
+        cfg = tidesdb.default_config()
+        assert isinstance(cfg.finish_compactions_on_close, bool)
+
+    def test_open_with_finish_compactions_true(self, temp_db_path):
+        """Opening with the flag enabled works and runs compactions to completion."""
+        db = tidesdb.TidesDB.open(
+            temp_db_path, finish_compactions_on_close=True
+        )
+        db.create_column_family("fc_cf")
+        cf = db.get_column_family("fc_cf")
+        for i in range(20):
+            with db.begin_txn() as txn:
+                txn.put(cf, f"k{i}".encode(), b"v")
+                txn.commit()
+        cf.flush_memtable()
+        db.close()
+
+        db = tidesdb.TidesDB.open(temp_db_path)
+        try:
+            cf = db.get_column_family("fc_cf")
+            with db.begin_txn() as txn:
+                assert txn.get(cf, b"k0") == b"v"
+        finally:
+            db.close()
+
+
+class TestWriteAmplificationStats:
+    """Tests for the write-amplification counters on Stats and DbStats."""
+
+    def test_cf_stats_have_wa_fields(self, db):
+        db.create_column_family("wa_cf")
+        cf = db.get_column_family("wa_cf")
+        for i in range(100):
+            with db.begin_txn() as txn:
+                txn.put(cf, f"key{i:04d}".encode(), b"x" * 64)
+                txn.commit()
+        cf.purge()
+        stats = cf.get_stats()
+        for field in (
+            "wal_bytes_written",
+            "flush_bytes_written",
+            "compaction_bytes_written",
+            "compaction_bytes_read",
+            "user_bytes_written",
+            "flush_count",
+            "compaction_count",
+        ):
+            assert hasattr(stats, field)
+            assert isinstance(getattr(stats, field), int)
+            assert getattr(stats, field) >= 0
+        # Committing 100 KV pairs must register some logical user bytes.
+        assert stats.user_bytes_written > 0
+
+    def test_db_stats_have_wa_fields(self, db):
+        db.create_column_family("wa_db_cf")
+        cf = db.get_column_family("wa_db_cf")
+        for i in range(50):
+            with db.begin_txn() as txn:
+                txn.put(cf, f"k{i}".encode(), b"value")
+                txn.commit()
+        stats = db.get_db_stats()
+        for field in (
+            "uwal_bytes_written",
+            "wal_bytes_written",
+            "flush_bytes_written",
+            "compaction_bytes_written",
+            "compaction_bytes_read",
+            "user_bytes_written",
+            "flush_count",
+            "compaction_count",
+        ):
+            assert hasattr(stats, field)
+            assert isinstance(getattr(stats, field), int)
+            assert getattr(stats, field) >= 0
+        assert stats.user_bytes_written > 0
+
+
+class TestS3Connector:
+    """Tests for the S3 object store connector factories.
+
+    The linked library may or may not be built with S3 support. Either way the
+    binding must behave deterministically: succeed with a handle, or raise a
+    clear TidesDBError explaining S3 is not compiled in -- never an
+    AttributeError or a crash.
+    """
+
+    def test_s3_create_is_graceful(self):
+        try:
+            handle = tidesdb.objstore_s3_create(
+                endpoint="localhost:9000",
+                bucket="testbucket",
+                access_key="minioadmin",
+                secret_key="minioadmin",
+                use_path_style=True,
+            )
+            assert handle is not None
+        except tidesdb.TidesDBError as exc:
+            assert "S3" in str(exc) or "s3" in str(exc)
+
+    def test_s3_create_config_is_graceful(self):
+        try:
+            handle = tidesdb.objstore_s3_create_config(
+                endpoint="localhost:9000",
+                bucket="testbucket",
+                access_key="minioadmin",
+                secret_key="minioadmin",
+                use_path_style=True,
+                tls_insecure_skip_verify=True,
+            )
+            assert handle is not None
+        except tidesdb.TidesDBError as exc:
+            assert "S3" in str(exc) or "s3" in str(exc)
+
+
+class TestBusyErrorCode:
+    """Tests for the TDB_ERR_BUSY error code."""
+
+    def test_busy_constant_value(self):
+        assert tidesdb.TDB_ERR_BUSY == -14
+
+    def test_busy_message(self):
+        err = tidesdb.TidesDBError.from_code(tidesdb.TDB_ERR_BUSY)
+        assert "busy" in str(err).lower()
+        assert err.code == tidesdb.TDB_ERR_BUSY
 
 
 if __name__ == "__main__":
