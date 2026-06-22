@@ -54,9 +54,10 @@ from .tidesdb import (
     TDB_ERR_LOCKED,
     TDB_ERR_READONLY,
     TDB_ERR_BUSY,
+    TDB_ERR_PRECONDITION,
 )
 
-__version__ = "0.11.1"
+__version__ = "0.11.2"
 __all__ = [
     "TidesDB",
     "Transaction",
@@ -104,4 +105,5 @@ __all__ = [
     "TDB_ERR_LOCKED",
     "TDB_ERR_READONLY",
     "TDB_ERR_BUSY",
+    "TDB_ERR_PRECONDITION",
 ]
