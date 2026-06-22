@@ -1146,6 +1146,20 @@ class TestDbStats:
         assert stats.total_sstable_count >= 0
         assert stats.total_data_size_bytes >= 0
 
+    def test_db_stats_does_not_corrupt_heap(self, db, cf):
+        """Regression: tidesdb_get_db_stats writes the full C struct. If the
+        Python _CDbStats is short by even one field (e.g. the primary_epoch /
+        seen_epoch fencing counters), the C side scribbles past the buffer and
+        corrupts the heap, segfaulting on a later commit. Interleave stats reads
+        with writes to catch any such ABI drift."""
+        for round_ in range(20):
+            db.get_db_stats()
+            with db.begin_txn() as txn:
+                for i in range(25):
+                    txn.put(cf, f"heap_{round_}_{i}".encode(), b"v" * 64)
+                txn.commit()
+            db.get_db_stats()
+
     def test_db_stats_all_fields_present(self, db):
         """Test that all DbStats fields are populated."""
         stats = db.get_db_stats()
@@ -1164,6 +1178,11 @@ class TestDbStats:
         assert isinstance(stats.txn_memory_bytes, int)
         assert isinstance(stats.compaction_queue_size, int)
         assert isinstance(stats.flush_queue_size, int)
+        # single-writer fencing epochs (object-store mode); 0 in local mode
+        assert isinstance(stats.primary_epoch, int)
+        assert isinstance(stats.seen_epoch, int)
+        assert stats.primary_epoch == 0
+        assert stats.seen_epoch == 0
 
     def test_db_stats_after_purge(self, db, cf):
         """Test db stats after purging."""

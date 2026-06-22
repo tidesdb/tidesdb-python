@@ -98,6 +98,7 @@ TDB_ERR_UNKNOWN = -11
 TDB_ERR_LOCKED = -12
 TDB_ERR_READONLY = -13
 TDB_ERR_BUSY = -14
+TDB_ERR_PRECONDITION = -15
 
 
 class CompressionAlgorithm(IntEnum):
@@ -172,6 +173,7 @@ class TidesDBError(Exception):
             TDB_ERR_LOCKED: "database is locked",
             TDB_ERR_READONLY: "database is read-only",
             TDB_ERR_BUSY: "resource busy",
+            TDB_ERR_PRECONDITION: "precondition failed",
         }
 
         msg = error_messages.get(code, "unknown error")
@@ -391,6 +393,8 @@ class _CDbStats(Structure):
         ("total_uploads", c_uint64),
         ("total_upload_failures", c_uint64),
         ("replica_mode", c_int),
+        ("primary_epoch", c_uint64),
+        ("seen_epoch", c_uint64),
         ("uwal_bytes_written", c_uint64),
         ("wal_bytes_written", c_uint64),
         ("flush_bytes_written", c_uint64),
@@ -868,6 +872,8 @@ class DbStats:
     total_uploads: int = 0
     total_upload_failures: int = 0
     replica_mode: bool = False
+    primary_epoch: int = 0
+    seen_epoch: int = 0
     uwal_bytes_written: int = 0
     wal_bytes_written: int = 0
     flush_bytes_written: int = 0
@@ -2541,6 +2547,8 @@ class TidesDB:
             total_uploads=c_stats.total_uploads,
             total_upload_failures=c_stats.total_upload_failures,
             replica_mode=bool(c_stats.replica_mode),
+            primary_epoch=c_stats.primary_epoch,
+            seen_epoch=c_stats.seen_epoch,
             uwal_bytes_written=c_stats.uwal_bytes_written,
             wal_bytes_written=c_stats.wal_bytes_written,
             flush_bytes_written=c_stats.flush_bytes_written,
